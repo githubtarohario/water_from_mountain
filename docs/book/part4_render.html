@@ -1,0 +1,335 @@
+
+<div class="part">
+  <div class="pl">第 IV 部</div>
+  <h1>表現編</h1>
+  <p>計算した粒子を、どう「見せる」か。<br>球としての描画、水面の生成、そしてカメラと操作。</p>
+</div>
+
+<!-- =============================== 第 14 章 =============================== -->
+<div class="chap-label">第 14 章</div>
+<h1>粒子の描画 — インスタンシングとスフィア・インポスター</h1>
+<div class="chap-lead">12,000 個の球をどう効率よく描くか。この章では、1 回の描画命令で大量の同じ形を描くインスタンシングと、平らな四角形をピクセルシェーダーで「本物の球」に見せるスフィア・インポスターの技法を学びます。</div>
+
+<h2>14.1 課題 — 球を 12,000 個描く</h2>
+<p>球を三角形メッシュで作ると、粗くても 1 個 100 三角形ほど必要で、12,000 個で 120 万三角形になります。しかも遠くの粒子は数ピクセルにしか映らず、ほとんどが無駄になります。そこで「カメラに正対する四角形を描き、ピクセルシェーダーで球の形に削る」<b>スフィア・インポスター</b>（impostor = 替え玉）を使います。1 粒子 2 三角形で済み、どんな距離でも輪郭が滑らかです。</p>
+
+<h2>14.2 ビルボードの生成</h2>
+<p>粒子データ（位置と速さ）は <code>StructuredBuffer&lt;float4&gt;</code> として GPU に置き、<code>DrawInstanced(4, N)</code> で「4 頂点の四角形を N 個」描きます。頂点シェーダーは <code>SV_InstanceID</code> で粒子を、<code>SV_VertexID</code> で四隅を選びます。四角形は<b>ビュー空間</b>で作るので、常にカメラに正対します（ビルボード）。</p>
+{{CODE:shaders/Particle.hlsl:PSIn VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID):}}
+{{CODE:src/FluidRenderer.cpp:void FluidRenderer::DrawSpheres(Graphics& gfx, UINT count, ID3D11PixelShader* ps):}}
+
+<h2>14.3 球面の再構成と深度の書き込み</h2>
+<div class="fig">
+<svg width="520" height="180" viewBox="0 0 520 180" font-family="sans-serif" font-size="11">
+  <g transform="translate(30,20)">
+    <rect x="0" y="0" width="140" height="140" fill="#f4f6f9" stroke="#2b5797"/>
+    <circle cx="70" cy="70" r="70" fill="#dbe8f7" stroke="#2b5797"/>
+    <circle cx="70" cy="70" r="2" fill="#333"/>
+    <line x1="70" y1="70" x2="120" y2="40" stroke="#c33" stroke-width="1.5"/><circle cx="120" cy="40" r="3" fill="#c33"/>
+    <text x="124" y="36" fill="#c33">(u, v)</text>
+    <text x="-2" y="156" font-size="10">uv = (−1,−1)</text><text x="98" y="-5" font-size="10">uv = (1, 1)</text>
+    <circle cx="20" cy="20" r="3" fill="#999"/><text x="8" y="12" font-size="10" fill="#777">u²+v²&gt;1 → discard</text>
+  </g>
+  <g transform="translate(230,30)" font-size="10.5">
+    <text x="0" y="0" font-weight="bold">ピクセルシェーダーでの処理</text>
+    <text x="0" y="24">r² = u² + v²</text>
+    <text x="0" y="42">r² &gt; 1 なら球の外 → 描かない (discard)</text>
+    <text x="0" y="66">法線 n = (u, v, −√(1 − r²))</text>
+    <text x="0" y="84" fill="#555">(左手系: カメラ側の半球は z &lt; 0)</text>
+    <text x="0" y="108">球面上の点 p = 中心 + n · 半径</text>
+    <text x="0" y="126">p を射影して深度を SV_Depth に書く</text>
+    <text x="0" y="150" fill="#555">→ 球同士・地形と正しく交差する</text>
+  </g>
+</svg>
+<div class="cap">図 14-1 四角形上の座標 (u, v) から球面を復元する</div>
+</div>
+<p>四角形の中の座標 (<i>u</i>, <i>v</i>)（−1〜1）を「球を正面から見た図」とみなすと、球面上の高さは √(1 − <i>u</i><sup>2</sup> − <i>v</i><sup>2</sup>) です。これで法線と、球面上の 3D 位置が求まります。位置を射影すれば正しい深度値が得られ、<code>SV_Depth</code> に書き込むと、平らな四角形なのに球として深度テストされます。</p>
+{{CODE:shaders/Particle.hlsl:bool SphereSurface(PSIn i, out float3 normalV, out float3 posV, out float depth):}}
+<div class="note"><b>SV_Depth のコスト</b> ピクセルシェーダーが深度を書くと、GPU は「シェーダー実行前に深度テストで捨てる」最適化（早期 Z）を使えなくなります。粒子 1 万個程度では問題になりませんが、画面を埋め尽くすような使い方では注意が必要です。</div>
+
+<h2>14.4 速度による着色</h2>
+<p>参考動画に合わせ、速さを「濃青 → 水色 → 緑 → 黄 → 赤」（Jet 風カラーマップ）に対応させます。5 つの制御色を等間隔に置いた区間線形補間です。</p>
+{{SVG_JET}}
+{{CODE:shaders/Common.hlsli:float3 JetColor(float t):}}
+<p>SPH の速度は粒子ごとに細かく揺らぐため、そのまま着色すると色がまだらになります。CPU 側で「自分と近傍の速さの平均」を描画用の速さとして渡し、なめらかな色分布にしています（物理計算には影響しません）。</p>
+{{CODE:src/SPH.cpp:const std::vector<XMFLOAT4>& SPH::GetRenderData():}}
+{{CODE:shaders/Particle.hlsl:PSColorOut PSColor(PSIn i):}}
+
+<div class="exercise"><b>演習 14</b>
+<ol>
+  <li><code>PSColor</code> の <code>discard</code> をコメントアウトし、四角形がそのまま見えることを確認してください。</li>
+  <li><code>SphereSurface</code> で <code>o.depth</code> を書かない（<code>SV_Depth</code> を使わない）ようにすると、球同士の重なりがどう変わりますか。</li>
+  <li>色を速さではなく高さ <i>y</i> で決めるように変えてみましょう。</li>
+</ol></div>
+
+<!-- =============================== 第 15 章 =============================== -->
+<div class="chap-label">第 15 章</div>
+<h1>表面生成 — スクリーンスペース流体レンダリング</h1>
+<div class="chap-lead">粒子の集まりを「1 枚の水面」として見せるには、粒子の間を滑らかにつなぐ面が必要です。この章では、3D のメッシュを作らずに画面空間だけで水面を作る手法（van der Laan ら 2009）を、深度パス・ぼかしパス・合成パスの順に学びます。</div>
+
+<h2>15.1 2 つのアプローチ</h2>
+<ul>
+  <li><b>陽なメッシュ生成</b>: 粒子から密度場を作り、Marching Cubes で等値面のメッシュを抽出する。視点によらない正確な面が得られるが、毎フレーム 3D 格子を走査するため重い。</li>
+  <li><b>スクリーンスペース法</b>: 粒子を球として深度だけ描き、画面上でぼかして法線を復元する。画面のピクセル数にしか依存せず軽い。見える面しか作らないが、リアルタイム表示には十分。</li>
+</ul>
+<div class="fig">
+<svg width="640" height="120" viewBox="0 0 640 120" font-family="sans-serif" font-size="10.5">
+  <rect x="5" y="25" width="140" height="60" rx="6" fill="#e4ecf7" stroke="#2b5797"/><text x="75" y="48" text-anchor="middle">① 深度パス</text><text x="75" y="66" text-anchor="middle" font-size="9">球の深度 → R32F</text>
+  <rect x="180" y="25" width="140" height="60" rx="6" fill="#e4ecf7" stroke="#2b5797"/><text x="250" y="48" text-anchor="middle">② ぼかしパス ×N</text><text x="250" y="66" text-anchor="middle" font-size="9">バイラテラル 横→縦</text>
+  <rect x="355" y="25" width="140" height="60" rx="6" fill="#e4ecf7" stroke="#2b5797"/><text x="425" y="48" text-anchor="middle">③ 合成パス</text><text x="425" y="66" text-anchor="middle" font-size="9">法線復元 + 陰影 + αブレンド</text>
+  <rect x="530" y="25" width="105" height="60" rx="6" fill="#fbe9d0" stroke="#c77"/><text x="582" y="52" text-anchor="middle">バックバッファ</text><text x="582" y="68" text-anchor="middle" font-size="9">(地形の上)</text>
+  <line x1="145" y1="55" x2="178" y2="55" stroke="#555" marker-end="url(#ar)"/><line x1="320" y1="55" x2="353" y2="55" stroke="#555" marker-end="url(#ar)"/><line x1="495" y1="55" x2="528" y2="55" stroke="#555" marker-end="url(#ar)"/>
+  <text x="75" y="105" text-anchor="middle" font-size="9" fill="#555">深度テストで地形の後ろは消える</text>
+  <text x="250" y="105" text-anchor="middle" font-size="9" fill="#555">球の凹凸を消し輪郭は保つ</text>
+</svg>
+<div class="cap">図 15-1 スクリーンスペース流体レンダリングの 3 パス</div>
+</div>
+
+<h2>15.2 深度パス</h2>
+<p>第 14 章の球インポスターを使い、色の代わりに<b>ビュー空間の <i>z</i></b> を <code>R32_FLOAT</code> テクスチャに書きます。メインの深度バッファ（地形描画済み）と組で描くので、地形の後ろの粒子は自動的に消えます。テクスチャは 0 でクリアし「0 = 流体なし」とします。表面用の球半径は粒子間隔の 1.3 倍にして、隣の球と重なり隙間を作らないようにします。</p>
+{{CODE:shaders/Particle.hlsl:PSDepthOut PSDepth(PSIn i):}}
+
+<h2>15.3 バイラテラルぼかし</h2>
+<p>深度テクスチャをそのままぼかすと、流体の輪郭で背景（深度 0）と混ざって縮み、また流体同士が重なる段差も溶けてしまいます。<b>バイラテラルフィルタ</b>は「距離が近く、かつ値も近い」画素だけを平均するフィルタで、輪郭を保ったまま内部を滑らかにできます。</p>
+<div class="formula">
+  <i>w</i><sub><i>k</i></sub> = exp(−<i>k</i><sup>2</sup> / 2<i>σ</i><sub>s</sub><sup>2</sup>) · exp(−(<i>d</i><sub><i>k</i></sub> − <i>d</i><sub>0</sub>)<sup>2</sup> / 2<i>σ</i><sub>d</sub><sup>2</sup>),&nbsp;&nbsp; <i>d</i>′ = Σ <i>w</i><sub><i>k</i></sub> <i>d</i><sub><i>k</i></sub> / Σ <i>w</i><sub><i>k</i></sub>
+</div>
+{{SVG_BILATERAL}}
+<p>実装上の工夫が 3 つあります。</p>
+<ul>
+  <li><b>透視補正</b>: ぼかし半径をワールド単位（0.9 m）で決め、それを画面に投影したピクセル数を使う。近い流体は広く、遠い流体は狭くぼかされ、距離によらず同じ滑らかさになる。</li>
+  <li><b>流体外の除外</b>: 深度 0 の画素は重みに入れない。これで輪郭が内側に縮まない。</li>
+  <li><b>分離可能</b>: 2D のフィルタ（<i>R</i><sup>2</sup> タップ）を横 1D + 縦 1D（2<i>R</i> タップ）に分ける。厳密には等価でないが十分近く、はるかに速い。横→縦を 4 回反復する。</li>
+</ul>
+{{CODE:shaders/FluidSurface.hlsl:float PSBlur(FullscreenVSOut i) : SV_Target:}}
+<div class="note"><b>σ<sub>d</sub> の決め方</b> 最初は 0.35 m にしていましたが、球の凹凸（≈ 0.4 m）が平滑化されず「ブロック状」に見えました。流体外は別途除外しているので、σ<sub>d</sub> は球の凹凸より十分大きい 1.5 m にしてよく、それで滑らかな面になりました。「何と何を区別したいのか」を考えて閾値を決めるのがコツです。</div>
+
+<h2>15.4 法線の復元</h2>
+<p>ぼかした深度から、各ピクセルのビュー空間位置を復元します。第 1 章の透視投影の式を逆向きに使います。</p>
+<div class="formula">
+  <b>p</b> = (ndc<sub>x</sub> · <i>d</i> / <i>P</i><sub>00</sub>,&nbsp; ndc<sub>y</sub> · <i>d</i> / <i>P</i><sub>11</sub>,&nbsp; <i>d</i>)
+</div>
+<p>隣接ピクセルとの位置の差（偏微分）の外積が法線です。輪郭では深度が飛ぶので、左右・上下それぞれで「差の小さい側」を採用して法線が壊れないようにします。ピクセルの +y は画面の下向き（ビュー空間の −y）なので、(+x) × (−y) = −z がカメラ側を向く法線になります。</p>
+{{CODE:shaders/FluidSurface.hlsl:float3 ViewPosFromDepth(int2 pix, float d):}}
+
+<h2>15.5 水面の陰影と合成</h2>
+<p>復元した法線で、第 4 章の 3 つの成分を合成します。水らしさの決め手は<b>フレネル</b>で、斜めから見た部分ほど空の色が強く映ります。</p>
+<div class="formula">
+  拡散: <i>C</i><sub>w</sub>(0.5 + 0.5 max(0, <b>n</b>·<b>L</b>)),&nbsp;&nbsp; 鏡面: 0.35 max(0, <b>n</b>·<b>H</b>)<sup>48</sup>,&nbsp;&nbsp; フレネル: <i>F</i> = 0.06 + 0.94(1 − <b>n</b>·<b>V</b>)<sup>4</sup>
+</div>
+{{CODE:shaders/FluidSurface.hlsl:float4 PSComposite(FullscreenVSOut i) : SV_Target:}}
+<p>α = 0.9 のアルファブレンドで地形の上に重ねます。合成パスは深度テストなしで描きますが、深度パスの時点で地形との前後関係が解決済みなので、流体の深度がある画素は必ず見えている流体です。</p>
+{{CODE:src/FluidRenderer.cpp:void FluidRenderer::RenderSurfaceMode(Graphics& gfx, UINT count, FrameConstants& frame, ID3D11Buffer* cbFrame):}}
+<div class="column"><b>コラム: レンダーターゲットのピンポン</b> テクスチャは「読みながら同じものに書く」ことができません。ぼかしのように同じ画像を繰り返し加工するときは、2 枚のテクスチャ A, B を用意し A→B, B→A と交互に使います。これを「ピンポン」と呼びます。SRV（読み取り）と RTV（書き込み）を同時に同じテクスチャにバインドすると、デバッグレイヤーが警告を出します。</div>
+
+<div class="exercise"><b>演習 15</b>
+<ol>
+  <li><code>SetBlurIterations(0)</code> にして、ぼかしなしの「球がボコボコ並んだ面」を見てください。1, 2, 4 と増やして変化を観察しましょう。</li>
+  <li><code>BLUR_DEPTH_SIGMA</code> を 0.2 にして、ブロック状の見た目を再現してください。</li>
+  <li>法線の「差の小さい側を採用」をやめて常に右側・下側を使うと、輪郭でどんなアーティファクトが出ますか。</li>
+  <li>合成の α を 0.5 にして、透けた水を試してください。より本格的には「厚み」を別パスで蓄積して透過率に使います（第 18 章）。</li>
+</ol></div>
+
+<!-- =============================== 第 16 章 =============================== -->
+<div class="chap-label">第 16 章</div>
+<h1>カメラ・入力・メインループ</h1>
+<div class="chap-lead">これまでの部品を 1 つのアプリケーションにまとめる「骨組み」を学びます。Windows のウィンドウとメッセージ、入力の受け取り、時間の管理、そして物理と描画を毎フレーム呼ぶループの構造です。</div>
+
+<h2>16.1 ウィンドウとメッセージループ</h2>
+<p>Windows のアプリケーションは、OS から送られる「メッセージ」（キー入力、マウス移動、サイズ変更…）を<b>ウィンドウプロシージャ</b>で処理します。ゲームやシミュレーションでは、メッセージが無いときにも描画を続けたいので、<code>PeekMessage</code> で「メッセージがあれば処理、無ければ 1 フレーム描画」という形にします。</p>
+{{CODE:src/main.cpp:    while (msg.message != WM_QUIT):    }}}
+<ul>
+  <li><b>経過時間 dt</b> は <code>steady_clock</code>（単調増加する高分解能時計）で測ります。壁時計（<code>system_clock</code>）は時刻合わせで巻き戻ることがあるので使いません。</li>
+  <li>物理更新は dt に応じてサブステップ数が決まり（第 10 章）、描画は 1 回です。</li>
+</ul>
+
+<h2>16.2 入力処理</h2>
+{{CODE:src/main.cpp:    LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam):    }}}
+<p><code>SetCapture</code> は、ドラッグ中にマウスがウィンドウの外に出てもメッセージを受け取り続けるための呼び出しです。<code>WM_SIZE</code> では、初期化が終わる前に届くメッセージを <code>initialized</code> フラグで無視しています。</p>
+
+<h2>16.3 リソースの検索</h2>
+<p>実行ファイルの場所は、Visual Studio から実行するときと <code>bin\</code> から直接起動するときで異なります。シェーダーやアセットは「カレントディレクトリ → exe の場所 → その親 → さらに親」の順に探し、どこから起動しても見つかるようにしています。</p>
+{{CODE:src/main.cpp:    bool FindProjectDirectories():    }}}
+
+<div class="exercise"><b>演習 16</b>
+<ol>
+  <li>キー <code>3</code> で「粒子と表面を同時に描く」モードを追加してみましょう（<code>FluidRenderer::Render</code> を 2 回呼ぶ）。</li>
+  <li>マウスの中ボタンドラッグでカメラの注視点を上下させる操作を追加してください。</li>
+  <li>タイトルバーの代わりに、フレーム時間の内訳（物理 / 描画）を計測して表示してみましょう。</li>
+</ol></div>
+
+<div class="part">
+  <div class="pl">第 V 部</div>
+  <h1>発展編</h1>
+  <p>速くする、壊れない、その先へ。</p>
+</div>
+
+<!-- =============================== 第 17 章 =============================== -->
+<div class="chap-label">第 17 章</div>
+<h1>性能とデバッグ</h1>
+<div class="chap-lead">動くものを「速く」「壊れにくく」するための実践的な知識をまとめます。このプログラムの開発過程で実際に起きた問題と、その解決を例にします。</div>
+
+<h2>17.1 性能の推移</h2>
+<table>
+  <tr><th>段階</th><th style="width:12%">粒子数</th><th style="width:12%">FPS</th><th>変更点</th></tr>
+  <tr><td>初期実装</td><td>8,300</td><td>20〜24</td><td>密度・力の各パスで近傍を走査。フレーム時間に応じてサブステップが増え、遅くなるほどさらに遅くなる</td></tr>
+  <tr><td>近傍リスト + マスク + 上限</td><td>10,500</td><td>106〜116</td><td>近傍走査を 1 回に、剰余をビットマスクに、サブステップ上限 5</td></tr>
+  <tr><td>安定化追加後（粒子）</td><td>12,000</td><td>63〜120</td><td>流れが密になり近傍数が増加</td></tr>
+  <tr><td>同（表面生成）</td><td>12,000</td><td>54〜80</td><td>ぼかし 8 パス分の GPU 負荷</td></tr>
+</table>
+<h2>17.2 ボトルネックの見つけ方</h2>
+<ul>
+  <li><b>CPU か GPU か</b>: 粒子モードと表面モードで FPS が違えば、その差は GPU。物理を一時停止（Space）して FPS が跳ね上がれば CPU（物理）がボトルネック。</li>
+  <li><b>計測を入れる</b>: <code>steady_clock</code> で各段（格子構築 / 密度 / 力 / 積分 / 描画）の時間を測り、タイトルに出す。推測より計測。</li>
+  <li><b>スケーリングを見る</b>: 粒子数を 2 倍にして時間が 2 倍なら線形、4 倍なら O(N²) の部分が残っている。</li>
+</ul>
+<h2>17.3 数値的な安定性</h2>
+<table>
+  <tr><th style="width:30%">症状</th><th>原因と対処</th></tr>
+  <tr><td>粒子が爆発的に飛散する</td><td>Δ<i>t</i> が CFL 条件を超えている / <i>k</i> が大きすぎる。Δ<i>t</i> を下げるか <i>k</i> を下げる。速度・加速度の上限を安全弁にする</td></tr>
+  <tr><td>粒子が塊になる</td><td>負圧（引力）が働いている。圧力を max(·, 0) で打ち切る。poly6 の勾配を圧力に使っていないか確認</td></tr>
+  <tr><td>壁際で粒子が弾かれる</td><td>境界での密度急上昇。加速度クランプ、接触ゾーン減衰（第 12 章）</td></tr>
+  <tr><td>処理落ちすると加速度的に遅くなる</td><td>サブステップ数の上限を設け、実時間より遅く進める</td></tr>
+  <tr><td>NaN が伝播して全滅する</td><td>0 除算（<i>r</i> = 0 の粒子対、密度 0）。<i>r</i><sup>2</sup> &lt; ε の対を除外、密度の下限</td></tr>
+</table>
+<h2>17.4 描画のデバッグ</h2>
+<ul>
+  <li><b>何も映らない</b>: カリングを無効に → 映れば巻き順。それでも映らなければ行列（転置忘れ、near/far）やビューポート。</li>
+  <li><b>D3D デバッグレイヤー</b>: Debug ビルドで有効化。SRV と RTV の同時バインド、未設定のステート、入力レイアウトの不一致などを出力ウィンドウに警告する。</li>
+  <li><b>中間結果を見る</b>: 法線を色として出す、深度テクスチャをそのまま表示する、ぼかし回数を 0 にする。パスを 1 つずつ確かめる。</li>
+  <li><b>シェーダーのコンパイルエラー</b>: メッセージボックスに行番号つきで出る。HLSL は暗黙の型変換に厳しい（<code>int2</code> と <code>float2</code> の混在など）。</li>
+</ul>
+<div class="column"><b>コラム: 「最初は動かない」が普通</b> このプログラムの初回実行では、min/max マクロとの衝突でコンパイルが通らず、次に粒子が谷の外に飛散し、表面生成はブロック状でした。1 つずつ原因を切り分け、パラメータの意味を考えて直すことで完成しています。CG と物理シミュレーションの開発は、この「観察 → 仮説 → 修正」の繰り返しです。</div>
+
+<!-- =============================== 第 18 章 =============================== -->
+<div class="chap-label">第 18 章</div>
+<h1>発展課題</h1>
+<div class="chap-lead">本書のプログラムを出発点に、さらに本格的な表現・性能を目指すための方向を示します。それぞれ、何が足りないのか・どの論文や手法が答えになるのかを整理します。</div>
+<table>
+  <tr><th style="width:26%">課題</th><th style="width:34%">現状の制約</th><th>アプローチ</th></tr>
+  <tr><td>粒子数を 10 万以上に</td><td>CPU SPH は 1〜2 万が上限</td><td>コンピュートシェーダーへ移植。格子構築は GPU 基数ソート、密度・力はスレッドグループで並列。粒子データを GPU に置いたままにできる</td></tr>
+  <tr><td>非圧縮性の向上</td><td>WCSPH は圧縮率が <i>k</i> に依存し、<i>k</i> を上げると Δ<i>t</i> が小さくなる</td><td>PCISPH（Solenthaler 2009）、IISPH、DFSPH（Bender 2015）。圧力を反復で解き、大きな Δ<i>t</i> で非圧縮を保つ</td></tr>
+  <tr><td>境界の精度</td><td>境界密度欠損を減衰で吸収</td><td>境界粒子（Akinci 2012）。地形表面に粒子をサンプリングして密度・圧力に寄与させる</td></tr>
+  <tr><td>表面張力・飛沫</td><td>表面張力なし</td><td>Akinci らの凝集力モデル、飛沫粒子の二次シミュレーション</td></tr>
+  <tr><td>透明な水</td><td>α 一定、屈折なし</td><td>厚みパス（加算ブレンドで粒子の厚さを蓄積）→ 透過率と屈折、背景の歪み</td></tr>
+  <tr><td>視点に依存しない水面</td><td>スクリーンスペースは見える面のみ</td><td>Marching Cubes、異方性カーネル（Yu &amp; Turk 2013）による陽なメッシュ生成</td></tr>
+  <tr><td>洞窟・オーバーハング地形</td><td>高さマップ</td><td>符号付き距離場（SDF）を構築し、最近傍面への押し戻しで衝突</td></tr>
+  <tr><td>大きな水面・海</td><td>粒子法は大領域に不向き</td><td>格子法（浅水方程式、FLIP/PIC）とのハイブリッド</td></tr>
+</table>
+<h2>18.1 取り組む順番の提案</h2>
+<ol>
+  <li><b>厚みパスと透過</b>: 表面生成に 1 パス足すだけで見た目が大きく向上する。GPU の加算ブレンドの練習にもなる。</li>
+  <li><b>境界粒子</b>: SPH の理解が深まる。地形の高さマップからサンプリングすれば実装は比較的容易。</li>
+  <li><b>GPU SPH</b>: コンピュートシェーダー、構造化バッファの読み書き、GPU 上のソートと、GPGPU の基礎を一通り学べる。</li>
+  <li><b>PCISPH / DFSPH</b>: 数値解法の理解が必要。論文を読みながら実装する。</li>
+</ol>
+
+<!-- =============================== 付録 =============================== -->
+<div class="chap-label">付録 A</div>
+<h1>数学のまとめ</h1>
+<h2>A.1 ベクトル</h2>
+<div class="formula">
+  |<b>a</b>| = √(<b>a</b>·<b>a</b>),&nbsp;&nbsp; <b>â</b> = <b>a</b>/|<b>a</b>|,&nbsp;&nbsp; <b>a</b>·<b>b</b> = |<b>a</b>||<b>b</b>|cos<i>θ</i><br>
+  <b>a</b>×<b>b</b> = (<i>a</i><sub>y</sub><i>b</i><sub>z</sub> − <i>a</i><sub>z</sub><i>b</i><sub>y</sub>, <i>a</i><sub>z</sub><i>b</i><sub>x</sub> − <i>a</i><sub>x</sub><i>b</i><sub>z</sub>, <i>a</i><sub>x</sub><i>b</i><sub>y</sub> − <i>a</i><sub>y</sub><i>b</i><sub>x</sub>),&nbsp;&nbsp; |<b>a</b>×<b>b</b>| = |<b>a</b>||<b>b</b>|sin<i>θ</i><br>
+  <b>a</b> の <b>n</b> 方向成分: (<b>a</b>·<b>n</b>)<b>n</b>,&nbsp;&nbsp; 反射: <b>a</b> − 2(<b>a</b>·<b>n</b>)<b>n</b>
+</div>
+<h2>A.2 変換</h2>
+<div class="formula">
+  クリップ座標 = <b>v</b> · World · View · Proj（DirectXMath の行ベクトル規約）<br>
+  NDC = clip.xyz / clip.w,&nbsp;&nbsp; 画面 x = (ndc<sub>x</sub> + 1)/2 · 幅,&nbsp; 画面 y = (1 − ndc<sub>y</sub>)/2 · 高さ<br>
+  逆変換（ビュー空間）: <i>x</i> = ndc<sub>x</sub> <i>z</i> / <i>P</i><sub>00</sub>,&nbsp; <i>y</i> = ndc<sub>y</sub> <i>z</i> / <i>P</i><sub>11</sub>
+</div>
+<h2>A.3 補間</h2>
+<div class="formula">
+  lerp(<i>a</i>, <i>b</i>, <i>t</i>) = <i>a</i> + (<i>b</i> − <i>a</i>)<i>t</i>,&nbsp;&nbsp; smoothstep: <i>t</i><sup>2</sup>(3 − 2<i>t</i>),&nbsp;&nbsp; fade: <i>t</i><sup>3</sup>(<i>t</i>(6<i>t</i> − 15) + 10)<br>
+  双線形: lerp(lerp(<i>h</i><sub>00</sub>, <i>h</i><sub>10</sub>, <i>t</i><sub>x</sub>), lerp(<i>h</i><sub>01</sub>, <i>h</i><sub>11</sub>, <i>t</i><sub>x</sub>), <i>t</i><sub>z</sub>)<br>
+  重心座標: P = <i>w</i><sub>0</sub>A + <i>w</i><sub>1</sub>B + <i>w</i><sub>2</sub>C,&nbsp; <i>w</i><sub>0</sub> + <i>w</i><sub>1</sub> + <i>w</i><sub>2</sub> = 1
+</div>
+<h2>A.4 SPH</h2>
+<div class="formula">
+  <i>ρ</i><sub><i>i</i></sub> = Σ<sub><i>j</i></sub> <i>m</i> <i>W</i><sub>poly6</sub>(<i>r</i><sub><i>ij</i></sub>),&nbsp; <i>p</i><sub><i>i</i></sub> = <i>k</i> max(<i>ρ</i><sub><i>i</i></sub> − <i>ρ</i><sub>0</sub>, 0)<br>
+  <b>a</b><sub><i>i</i></sub> = [ Σ<sub><i>j</i></sub> <i>m</i>(<i>p</i><sub><i>i</i></sub>+<i>p</i><sub><i>j</i></sub>)/(2<i>ρ</i><sub><i>j</i></sub>) · 45/(π<i>h</i><sup>6</sup>)(<i>h</i>−<i>r</i>)<sup>2</sup> <b>r̂</b><sub><i>ij</i></sub> + <i>μ</i> Σ<sub><i>j</i></sub> <i>m</i>(<b>v</b><sub><i>j</i></sub>−<b>v</b><sub><i>i</i></sub>)/<i>ρ</i><sub><i>j</i></sub> · 45/(π<i>h</i><sup>6</sup>)(<i>h</i>−<i>r</i>) ] / <i>ρ</i><sub><i>i</i></sub> + <b>g</b><br>
+  CFL: Δ<i>t</i> &lt; 0.4 <i>h</i> / (√<i>k</i> + <i>v</i><sub>max</sub>)
+</div>
+
+<div class="chap-label">付録 B</div>
+<h1>ファイル構成と API 要約</h1>
+<table>
+  <tr><th style="width:30%">ファイル</th><th>内容</th><th style="width:14%">主な章</th></tr>
+  <tr><td>src/main.cpp</td><td>ウィンドウ、入力、メインループ、定数バッファ更新</td><td>3, 16</td></tr>
+  <tr><td>src/Graphics.h/.cpp</td><td>D3D11 初期化、ステート、シェーダーコンパイル、バッファ更新</td><td>2, 3</td></tr>
+  <tr><td>src/FrameConstants.h</td><td>共通定数バッファ構造体</td><td>3</td></tr>
+  <tr><td>src/Camera.h/.cpp</td><td>オービットカメラ</td><td>1</td></tr>
+  <tr><td>src/Noise.h/.cpp</td><td>パーリンノイズ / fBm / 尾根 / 周期版</td><td>5</td></tr>
+  <tr><td>src/Terrain.h/.cpp</td><td>高さマップ、メッシュ、テクスチャ、OBJ 取り込み、衝突用問い合わせ</td><td>6, 7, 8</td></tr>
+  <tr><td>src/TextureLoader.h/.cpp</td><td>WIC 画像読み込み、ミップ付きテクスチャ作成</td><td>7</td></tr>
+  <tr><td>src/MeshLoader.h/.cpp</td><td>OBJ 読み込み</td><td>8</td></tr>
+  <tr><td>src/SPH.h/.cpp</td><td>SPH 本体、近傍探索、境界、エミッタ</td><td>10〜13</td></tr>
+  <tr><td>src/FluidRenderer.h/.cpp</td><td>粒子描画、表面生成</td><td>14, 15</td></tr>
+  <tr><td>shaders/Common.hlsli</td><td>定数バッファ、カラーマップ、全画面 VS</td><td>3, 14</td></tr>
+  <tr><td>shaders/Terrain.hlsl</td><td>地形の VS/PS</td><td>3, 4</td></tr>
+  <tr><td>shaders/Particle.hlsl</td><td>ビルボード VS、球の色 / 深度 PS</td><td>14, 15</td></tr>
+  <tr><td>shaders/FluidSurface.hlsl</td><td>ぼかし、法線復元、合成</td><td>15</td></tr>
+  <tr><td>assets/rock.png, terrain.obj</td><td>岩テクスチャ、地形メッシュ（差し替え可）</td><td>7, 8</td></tr>
+  <tr><td>tools/*.py</td><td>Blender 用 / 単体の試作地形生成スクリプト</td><td>8</td></tr>
+  <tr><td>docs/API.md, FLOW.md</td><td>API 仕様書、Mermaid フロー図（詳細はこちら）</td><td>—</td></tr>
+</table>
+<h2>主要クラスの公開関数</h2>
+<table>
+  <tr><th style="width:18%">クラス</th><th>関数</th></tr>
+  <tr><td>Graphics</td><td><code>Initialize, Resize, BeginFrame, EndFrame, CompileShaderFromFile, CreateConstantBuffer, UpdateBuffer, Get*State, ShaderPath, AssetPath</code></td></tr>
+  <tr><td>Camera</td><td><code>Rotate, Zoom, Pan, GetPosition, GetViewMatrix, GetProjMatrix</code></td></tr>
+  <tr><td>Terrain</td><td><code>Initialize, Render, GetHeight, GetNormal, GetValleyCenterX, IsMeshFromFile, IsTextureFromFile</code></td></tr>
+  <tr><td>SPH</td><td><code>Initialize, Reset, Update, GetRenderData, GetParticleCount, GetSimTime</code></td></tr>
+  <tr><td>FluidRenderer</td><td><code>Initialize, OnResize, Render, SetParticleRadius, SetSurfaceRadius, SetBlurIterations</code></td></tr>
+  <tr><td>Noise / TextureLoader / MeshLoader</td><td><code>Perlin2D, Fbm2D, Ridged2D, *Tileable</code> / <code>LoadFromFile, CreateFromPixels</code> / <code>LoadObj, ComputeSmoothNormals, ComputeBounds</code></td></tr>
+</table>
+
+<div class="chap-label">付録 C</div>
+<h1>用語集</h1>
+<table>
+  <tr><th style="width:26%">用語</th><th>説明</th></tr>
+  <tr><td>NDC（正規化デバイス座標）</td><td>透視除算後の座標。x, y が −1〜1、深度が 0〜1 の範囲に正規化されている</td></tr>
+  <tr><td>ラスタライズ</td><td>三角形をピクセルの集まりに変換すること。頂点属性は重心座標で補間される</td></tr>
+  <tr><td>深度バッファ / 深度テスト</td><td>ピクセルごとに最も手前の深度を記録し、奥のものを描かないようにする仕組み</td></tr>
+  <tr><td>巻き順（ワインディング）</td><td>三角形の頂点の並び順。画面上で時計回りか反時計回りかで表裏を判定する</td></tr>
+  <tr><td>RTV / DSV / SRV</td><td>レンダーターゲット / 深度ステンシル / シェーダーリソースの各ビュー。リソースの用途を示す</td></tr>
+  <tr><td>セマンティクス</td><td>HLSL の入出力に付ける意味のラベル（<code>SV_POSITION</code> など）</td></tr>
+  <tr><td>定数バッファ</td><td>フレーム中に一定の値をシェーダーへ渡すバッファ。16 バイト境界</td></tr>
+  <tr><td>StructuredBuffer</td><td>構造体の配列としてシェーダーから読めるバッファ</td></tr>
+  <tr><td>インスタンシング</td><td>1 回の描画命令で同じ形状を多数描く仕組み</td></tr>
+  <tr><td>ビルボード</td><td>常にカメラに正対する四角形</td></tr>
+  <tr><td>インポスター</td><td>単純な形状をシェーダーで複雑な形に見せかける技法</td></tr>
+  <tr><td>ミップマップ</td><td>テクスチャの縮小版の系列。遠景のちらつきを防ぐ</td></tr>
+  <tr><td>fBm</td><td>周波数と振幅を変えたノイズの重ね合わせ</td></tr>
+  <tr><td>高さマップ</td><td>(x, z) ごとに高さを持つ 2 次元配列による地形表現</td></tr>
+  <tr><td>SPH</td><td>Smoothed Particle Hydrodynamics。粒子とカーネルで流体を離散化する手法</td></tr>
+  <tr><td>カーネル関数</td><td>距離に応じた重み。半径 h の外で 0</td></tr>
+  <tr><td>状態方程式</td><td>密度から圧力を直接決める式（WCSPH）</td></tr>
+  <tr><td>CFL 条件</td><td>時間刻みの上限。情報が 1 ステップでセルより遠くへ伝わってはならない</td></tr>
+  <tr><td>シンプレクティック・オイラー法</td><td>速度を先に更新し、その速度で位置を更新する積分法</td></tr>
+  <tr><td>空間ハッシュ</td><td>セル座標を固定サイズの表に写す近傍探索の手法</td></tr>
+  <tr><td>カウンティングソート</td><td>キーの出現数と累積和で並べ替える、O(N) のソート</td></tr>
+  <tr><td>バイラテラルフィルタ</td><td>距離と値の両方の近さで重み付けする、エッジを保つ平滑化</td></tr>
+  <tr><td>スクリーンスペース</td><td>3D ではなく画面のピクセル上で処理を行うこと</td></tr>
+  <tr><td>フレネル反射</td><td>視線と面の角度で反射率が変わる現象</td></tr>
+</table>
+
+<div class="chap-label">付録 D</div>
+<h1>参考文献</h1>
+<ol>
+  <li>M. Müller, D. Charypar, M. Gross, "Particle-Based Fluid Simulation for Interactive Applications," SCA 2003. — SPH を CG に導入した基本文献。カーネル・状態方程式は本書と同じ。</li>
+  <li>W. J. van der Laan, S. Green, M. Sainz, "Screen Space Fluid Rendering with Curvature Flow," I3D 2009. — スクリーンスペース流体レンダリングの原典。</li>
+  <li>K. Perlin, "Improving Noise," SIGGRAPH 2002. — Fade 曲線と勾配の改良。</li>
+  <li>M. Teschner et al., "Optimized Spatial Hashing for Collision Detection of Deformable Objects," VMV 2003. — 空間ハッシュ関数。</li>
+  <li>N. Akinci et al., "Versatile Rigid-Fluid Coupling for Incompressible SPH," SIGGRAPH 2012. — 境界粒子。</li>
+  <li>B. Solenthaler, R. Pajarola, "Predictive-Corrective Incompressible SPH," SIGGRAPH 2009.</li>
+  <li>J. Bender, D. Koschier, "Divergence-Free SPH for Incompressible and Viscous Fluids," TVCG 2017.</li>
+  <li>J. Yu, G. Turk, "Reconstructing Surfaces of Particle-Based Fluids Using Anisotropic Kernels," TOG 2013.</li>
+  <li>C. Schlick, "An Inexpensive BRDF Model for Physically-based Rendering," Eurographics 1994.</li>
+  <li>D. Koschier, J. Bender, B. Solenthaler, M. Teschner, "Smoothed Particle Hydrodynamics Techniques for the Physics Based Simulation of Fluids and Solids," Eurographics Tutorial 2019. — SPH の現代的な総説。</li>
+  <li>Microsoft, "Direct3D 11 Graphics" / "HLSL" ドキュメント（learn.microsoft.com）。</li>
+</ol>
+<p class="center small" style="margin-top:20mm">— 本文おわり —</p>
+</body>
+</html>

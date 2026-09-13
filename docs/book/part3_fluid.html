@@ -1,0 +1,315 @@
+
+<div class="part">
+  <div class="pl">第 III 部</div>
+  <h1>流体編</h1>
+  <p>水を「粒子の集まり」として計算する SPH 法。<br>その考え方から、速く・安定に動かすための実装技術まで。</p>
+</div>
+
+<!-- =============================== 第 9 章 =============================== -->
+<div class="chap-label">第 9 章</div>
+<h1>粒子で流体を表す — 粒子法の考え方</h1>
+<div class="chap-lead">水の動きをコンピュータで計算するには、連続した「流体」を有限個の数値で表す必要があります。この章では、流体シミュレーションの 2 つの流儀（格子法と粒子法）と、粒子法の代表である SPH の基本的な考え方を、数式を最小限にして説明します。</div>
+
+<h2>9.1 流体の運動方程式</h2>
+<p>流体の運動は<b>ナビエ・ストークス方程式</b>で記述されます。難しそうな名前ですが、中身はニュートンの運動方程式 <i>m</i><b>a</b> = <b>F</b> を流体に当てはめたものです。</p>
+<div class="formula">
+  <i>ρ</i> (d<b>v</b>/d<i>t</i>) = −∇<i>p</i> + <i>μ</i>∇<sup>2</sup><b>v</b> + <i>ρ</i><b>g</b>
+</div>
+<p>左辺は「密度 × 加速度」、右辺は流体にはたらく 3 つの力です。</p>
+<table>
+  <tr><th style="width:20%">項</th><th style="width:22%">名前</th><th>意味</th></tr>
+  <tr><td>−∇<i>p</i></td><td>圧力勾配力</td><td>圧力の高い所から低い所へ押される。流体が「詰まりすぎない」ようにする力</td></tr>
+  <tr><td><i>μ</i>∇<sup>2</sup><b>v</b></td><td>粘性力</td><td>周囲との速度差を減らす。粘りけ</td></tr>
+  <tr><td><i>ρ</i><b>g</b></td><td>外力（重力）</td><td>下向きに引かれる</td></tr>
+</table>
+<p>この式を「どの場所で」計算するかで 2 つの流儀に分かれます。</p>
+<ul>
+  <li><b>格子法（オイラー的）</b>: 空間を格子に切り、各格子で流速や圧力を追う。気体や大規模な水面に向くが、飛沫や自由表面の追跡が難しい。</li>
+  <li><b>粒子法（ラグランジュ的）</b>: 流体を粒子に分け、粒子が流れに乗って動く。自由表面や飛沫が自然に表現でき、境界の扱いも直感的。本書はこちら。</li>
+</ul>
+
+<h2>9.2 SPH の基本アイデア — 「なめらかな粒子」</h2>
+<p>粒子法の代表 SPH（Smoothed Particle Hydrodynamics）は、もともと天体物理学で星の形成を計算するために生まれ、後に CG に持ち込まれました（Müller ら、2003）。核心は次の 1 つの考え方です。</p>
+<div class="point"><b>ポイント</b> 各粒子は「点」ではなく、半径 <i>h</i> の範囲にぼんやり広がった質量の塊とみなす。ある場所の物理量（密度など）は、その場所を覆っている粒子たちの寄与を「距離が近いほど大きい重み」で足し合わせて求める。</div>
+<div class="fig">
+<svg width="480" height="200" viewBox="0 0 480 200" font-family="sans-serif" font-size="11">
+  <g transform="translate(120,100)">
+    <circle cx="0" cy="0" r="80" fill="#dbe8f7" stroke="#2b5797" stroke-dasharray="4,3"/>
+    <g fill="#2b5797"><circle cx="0" cy="0" r="6"/><circle cx="35" cy="-20" r="5"/><circle cx="-30" cy="30" r="5"/><circle cx="-45" cy="-40" r="5"/><circle cx="55" cy="40" r="5"/><circle cx="10" cy="60" r="5"/></g>
+    <g fill="#bbb"><circle cx="95" cy="-30" r="5"/><circle cx="-100" cy="20" r="5"/><circle cx="70" cy="-75" r="5"/></g>
+    <text x="4" y="-10" font-weight="bold">i</text>
+    <line x1="0" y1="0" x2="80" y2="0" stroke="#c33"/><text x="30" y="-4" fill="#c33">h</text>
+    <text x="-115" y="-90" font-size="10">半径 h の中の粒子だけが i に影響する</text>
+  </g>
+  <g transform="translate(260,40)" font-size="10.5">
+    <text x="0" y="0" font-weight="bold">量 A の粒子 i における値</text>
+    <text x="0" y="24">A_i = Σ_j (m_j / ρ_j) · A_j · W(r_ij, h)</text>
+    <text x="0" y="48" fill="#555">m: 質量, ρ: 密度, r_ij: 距離</text>
+    <text x="0" y="66" fill="#555">W: カーネル関数 (近いほど大きい重み)</text>
+    <text x="0" y="96">灰色の粒子は h より遠いので無視</text>
+    <text x="0" y="114">→ 「近傍探索」が計算の要 (第 11 章)</text>
+  </g>
+</svg>
+<div class="cap">図 9-1 SPH の補間。粒子 i の値は、半径 h 内の粒子の重み付き和</div>
+</div>
+<p>この「重み付き和」の式を使えば、密度も圧力の勾配も粘性も、すべて近傍粒子の和として計算できます。微分方程式を解く代わりに「粒子ごとの足し算」に置き換わるのが SPH の魅力です。</p>
+
+<h2>9.3 1 ステップの流れ</h2>
+<p>SPH の時間発展は、毎ステップ次の手順を繰り返します。第 10 章以降で各段を詳しく見ます。</p>
+<ol>
+  <li>各粒子の近傍（距離 &lt; <i>h</i>）を見つける（第 11 章）</li>
+  <li>密度 <i>ρ</i> を計算し、状態方程式から圧力 <i>p</i> を求める</li>
+  <li>圧力力・粘性力・重力から加速度を求める</li>
+  <li>速度と位置を更新する（時間積分）</li>
+  <li>地形・壁との衝突を処理する（第 12 章）</li>
+</ol>
+<div class="column"><b>コラム: なぜ「弱圧縮性」なのか</b> 本当の水はほとんど圧縮しません（非圧縮）。しかし非圧縮を厳密に守るには連立方程式を反復で解く必要があり、計算が重くなります。CG では「少しだけ圧縮を許し、圧縮したら強い圧力で押し返す」という<b>弱圧縮性 SPH（WCSPH）</b>がよく使われます。本プログラムもこの方式で、圧縮率は約 0.5% です。厳密な非圧縮手法（PCISPH, DFSPH）は第 18 章で紹介します。</div>
+
+<!-- =============================== 第 10 章 =============================== -->
+<div class="chap-label">第 10 章</div>
+<h1>SPH の理論と実装</h1>
+<div class="chap-lead">前章のアイデアを具体的な数式にし、コードに落とします。カーネル関数の選び方、密度と圧力、力の計算、時間積分、そしてパラメータの決め方まで、実装と 1 対 1 に対応させて解説します。</div>
+
+<h2>10.1 カーネル関数</h2>
+<p>カーネル <i>W</i>(<i>r</i>, <i>h</i>) は「距離 <i>r</i> の粒子の重み」を決める関数で、<i>r</i> ≥ <i>h</i> で 0、全空間で積分すると 1 になるよう正規化されています。Müller らは用途ごとに 3 種類を使い分けました。</p>
+<div class="formula">
+  <i>W</i><sub>poly6</sub>(<i>r</i>) = 315 / (64π<i>h</i><sup>9</sup>) · (<i>h</i><sup>2</sup> − <i>r</i><sup>2</sup>)<sup>3</sup> &nbsp;… 密度用<br>
+  ∇<i>W</i><sub>spiky</sub>(<i>r</i>) = −45 / (π<i>h</i><sup>6</sup>) · (<i>h</i> − <i>r</i>)<sup>2</sup> · <b>r̂</b> &nbsp;… 圧力用<br>
+  ∇<sup>2</sup><i>W</i><sub>visc</sub>(<i>r</i>) = 45 / (π<i>h</i><sup>6</sup>) · (<i>h</i> − <i>r</i>) &nbsp;… 粘性用
+</div>
+{{SVG_KERNELS}}
+<ul>
+  <li><b>poly6</b> は <i>r</i><sup>2</sup> だけで計算でき平方根が不要。密度の和に向く。</li>
+  <li>poly6 の勾配は <i>r</i> → 0 で 0 になるため、粒子が重なると押し返す力が消えて<b>凝集</b>してしまう。<b>spiky</b> は中心で勾配が最大なので圧力力に使う。</li>
+  <li><b>visc</b> のラプラシアンは常に正で、粘性力が必ず速度差を減らす向きにはたらく（数値的に安定）。</li>
+</ul>
+<p>係数は <i>h</i> から起動時に 1 回だけ計算します。</p>
+{{CODE:src/SPH.cpp:void SPH::Initialize(const Terrain* terrain, const SPHParams& params):}}
+
+<h2>10.2 密度と圧力</h2>
+<p>密度は「質量の重み付き和」です。自分自身（<i>r</i> = 0）も含めます。</p>
+<div class="formula">
+  <i>ρ</i><sub><i>i</i></sub> = Σ<sub><i>j</i></sub> <i>m</i> <i>W</i><sub>poly6</sub>(<i>r</i><sub><i>ij</i></sub>),&nbsp;&nbsp; <i>p</i><sub><i>i</i></sub> = <i>k</i> · max(<i>ρ</i><sub><i>i</i></sub> − <i>ρ</i><sub>0</sub>, 0)
+</div>
+<p>圧力は<b>状態方程式</b>で密度から直接決めます。静止密度 <i>ρ</i><sub>0</sub>（水なら 1000 kg/m<sup>3</sup>）より詰まっていれば正の圧力が生じ、粒子同士を押し離します。負の圧力（引力）を許すと粒子が塊になって不自然になるので、0 で打ち切ります。</p>
+{{CODE:src/SPH.cpp:void SPH::ComputeDensityPressure():}}
+
+<h2>10.3 力と加速度</h2>
+<div class="formula">
+  <b>f</b><sub><i>i</i></sub><sup>p</sup> = −Σ<sub><i>j</i>≠<i>i</i></sub> <i>m</i> (<i>p</i><sub><i>i</i></sub> + <i>p</i><sub><i>j</i></sub>) / (2<i>ρ</i><sub><i>j</i></sub>) · ∇<i>W</i><sub>spiky</sub>(<i>r</i><sub><i>ij</i></sub>)<br>
+  <b>f</b><sub><i>i</i></sub><sup>v</sup> = <i>μ</i> Σ<sub><i>j</i>≠<i>i</i></sub> <i>m</i> (<b>v</b><sub><i>j</i></sub> − <b>v</b><sub><i>i</i></sub>) / <i>ρ</i><sub><i>j</i></sub> · ∇<sup>2</sup><i>W</i><sub>visc</sub>(<i>r</i><sub><i>ij</i></sub>)<br>
+  <b>a</b><sub><i>i</i></sub> = (<b>f</b><sub><i>i</i></sub><sup>p</sup> + <b>f</b><sub><i>i</i></sub><sup>v</sup>) / <i>ρ</i><sub><i>i</i></sub> + <b>g</b>
+</div>
+<p>圧力力の (<i>p</i><sub><i>i</i></sub> + <i>p</i><sub><i>j</i></sub>)/2 は「2 粒子の圧力の平均」で、作用・反作用が対称になる（粒子 <i>i</i> が <i>j</i> を押す力と <i>j</i> が <i>i</i> を押す力が等しい）ようにした形です。∇<i>W</i> は <i>j</i> から <i>i</i> へ向かうので、圧力力は常に離れる向き（斥力）になります。</p>
+{{CODE:src/SPH.cpp:void SPH::ComputeForces():}}
+<p>実装では <code>spikyCoef * hr * hr * invR</code> に (<i>x</i><sub><i>i</i></sub> − <i>x</i><sub><i>j</i></sub>) を掛けることで「大きさ × 単位ベクトル」を一度に計算しています。加速度の上限（<code>maxAcceleration</code>）については第 12 章で説明します。</p>
+
+<h2>10.4 時間積分</h2>
+<p>加速度から速度と位置を進めます。もっとも簡単な<b>シンプレクティック・オイラー法</b>（速度を先に更新し、その新しい速度で位置を更新する）を使います。</p>
+<div class="formula">
+  <b>v</b> ← <b>v</b> + <b>a</b>Δ<i>t</i>,&nbsp;&nbsp; <b>x</b> ← <b>x</b> + <b>v</b>Δ<i>t</i>
+</div>
+<p>「位置を先に更新する」普通のオイラー法と比べて、エネルギーが増え続ける（爆発する）傾向が小さく、粒子系では標準的な選択です。</p>
+{{CODE:src/SPH.cpp:void SPH::Integrate():}}
+
+<h2>10.5 時間刻みと CFL 条件</h2>
+<p>Δ<i>t</i> は大きいほど速く計算できますが、大きすぎると発散します。目安となるのが <b>CFL 条件</b>「1 ステップで情報が伝わる距離が <i>h</i> を超えてはならない」です。圧力波は音速 <i>c</i> = √<i>k</i> で伝わるので、</p>
+<div class="formula">
+  Δ<i>t</i> &lt; 0.4 <i>h</i> / (<i>c</i> + <i>v</i><sub>max</sub>) ≈ 0.4 × 0.6 / (45 + 10) ≈ 0.0044 s
+</div>
+<p>本プログラムは Δ<i>t</i> = 0.003 s です。1 フレーム（1/60 s）を複数の<b>サブステップ</b>に分けて進めますが、処理落ちでフレーム時間が伸びるとサブステップが増えてさらに遅くなる悪循環（死のスパイラル）に陥ります。そこでサブステップ数に上限を設け、上限に達したら実時間より遅く進めます。</p>
+{{CODE:src/SPH.cpp:void SPH::Update(float frameTime):}}
+
+<h2>10.6 パラメータの決め方</h2>
+{{CODE:src/SPH.h:struct SPHParams:};}}
+<table>
+  <tr><th style="width:24%">量</th><th style="width:20%">値</th><th>決め方</th></tr>
+  <tr><td>粒子間隔 <i>s</i></td><td>0.30 m</td><td>谷底幅 (≈ 3 m) に約 10 個並ぶ粒度。細かくすると粒子数は 3 乗で増える</td></tr>
+  <tr><td>平滑化半径 <i>h</i></td><td>2<i>s</i> = 0.60 m</td><td>静止状態で約 33 個の近傍。少なすぎると密度がガタつき、多いと重い</td></tr>
+  <tr><td>質量 <i>m</i></td><td><i>ρ</i><sub>0</sub><i>s</i><sup>3</sup> = 27 kg</td><td>粒子 1 個の占める体積 × 水の密度。これで静止時に <i>ρ</i> ≈ <i>ρ</i><sub>0</sub> になる</td></tr>
+  <tr><td>剛性 <i>k</i></td><td>2000</td><td>深さ <i>H</i> の水柱の圧縮率は <i>ρg H</i>/<i>k</i> ≈ 0.5%/m。大きくすると Δ<i>t</i> を小さくする必要</td></tr>
+  <tr><td>粘性 <i>μ</i></td><td>0.40</td><td>実際の水より大きいが、粒子のばらつきを抑え流れをまとめる。安定条件の目安は &lt; 1</td></tr>
+</table>
+
+<div class="exercise"><b>演習 10</b>
+<ol>
+  <li><code>stiffness</code> を 500 にすると水が「柔らかく」なって沈み込みます。5000 にすると何が起きますか（Δ<i>t</i> との関係を考えてください）。</li>
+  <li>圧力の <code>std::max(rho - rho0, 0)</code> を外して負圧を許し、粒子が塊になる様子を観察してください。</li>
+  <li><code>timeStep</code> を 0.006 にして CFL 条件を破ると、どのように発散するか観察してください。</li>
+</ol></div>
+
+<!-- =============================== 第 11 章 =============================== -->
+<div class="chap-label">第 11 章</div>
+<h1>近傍探索 — 空間ハッシュとカウンティングソート</h1>
+<div class="chap-lead">SPH の計算時間のほとんどは「半径 h 内の粒子を見つける」ことに費やされます。この章では、全対全の O(N²) を避けるための格子分割、無限空間を固定サイズの表に写す空間ハッシュ、動的メモリ確保なしで格子を作るカウンティングソートを学びます。</div>
+
+<h2>11.1 なぜ工夫が必要か</h2>
+<p>粒子 12,000 個で全対全の距離を調べると 1.4 億回/ステップ、1 秒間に 300 ステップなら 430 億回で、CPU では到底間に合いません。しかし距離 <i>h</i> 以上の粒子は寄与 0 なので、「近くにいる可能性のある粒子」だけを調べれば十分です。</p>
+
+<h2>11.2 一様格子と 27 セル走査</h2>
+<p>空間を一辺 <i>h</i> の立方体セルに切り、各粒子をセルに登録します。粒子 <i>i</i> の近傍は、<i>i</i> のいるセルと隣接する 26 セル、合計 27 セルの中にしかありません。</p>
+<div class="fig">
+<svg width="420" height="200" viewBox="0 0 420 200" font-family="sans-serif" font-size="11">
+  <g transform="translate(20,20)" stroke="#bbb">
+    <g fill="none"><rect x="0" y="0" width="160" height="160"/><line x1="40" y1="0" x2="40" y2="160"/><line x1="80" y1="0" x2="80" y2="160"/><line x1="120" y1="0" x2="120" y2="160"/><line x1="0" y1="40" x2="160" y2="40"/><line x1="0" y1="80" x2="160" y2="80"/><line x1="0" y1="120" x2="160" y2="120"/></g>
+    <rect x="40" y="40" width="120" height="120" fill="#dbe8f7" stroke="none" opacity="0.8"/>
+    <rect x="80" y="80" width="40" height="40" fill="#b9d0ee" stroke="none"/>
+    <circle cx="100" cy="100" r="30" fill="none" stroke="#c33" stroke-dasharray="3,2"/>
+    <circle cx="100" cy="100" r="4" fill="#c33" stroke="none"/>
+    <g fill="#2b5797" stroke="none"><circle cx="60" cy="70" r="3"/><circle cx="130" cy="95" r="3"/><circle cx="95" cy="140" r="3"/><circle cx="20" cy="30" r="3"/><circle cx="150" cy="20" r="3"/><circle cx="70" cy="120" r="3"/></g>
+  </g>
+  <g transform="translate(210,40)" font-size="10.5">
+    <text x="0" y="0">セルの一辺 = h</text>
+    <text x="0" y="20">粒子 (赤) の探索半径 h の円は</text>
+    <text x="0" y="36">周囲 3×3 (3D では 3×3×3) セルに収まる</text>
+    <text x="0" y="62" fill="#555">候補: 27 セル × 平均 8 個 ≈ 216 個</text>
+    <text x="0" y="78" fill="#555">→ 距離判定で約 33 個に絞る</text>
+    <text x="0" y="104">全対全 12,000 個 → 216 個 (55 倍速)</text>
+  </g>
+</svg>
+<div class="cap">図 11-1 一様格子による近傍候補の絞り込み（2D で図示）</div>
+</div>
+
+<h2>11.3 空間ハッシュ</h2>
+<p>地形全体を格子で埋めると 100 万セル以上になり、毎ステップのクリアが重くなります。代わりにセル座標を<b>ハッシュ関数</b>で固定サイズの表（粒子数の 2 倍程度）に写します。空のセルはメモリを消費しません。</p>
+<div class="formula">
+  (<i>c</i><sub>x</sub>, <i>c</i><sub>y</sub>, <i>c</i><sub>z</sub>) = ⌊<b>x</b> / <i>h</i>⌋,&nbsp;&nbsp; key = (<i>c</i><sub>x</sub>·73856093 ⊕ <i>c</i><sub>y</sub>·19349663 ⊕ <i>c</i><sub>z</sub>·83492791) &amp; (tableSize − 1)
+</div>
+<p>3 つの大きな素数を掛けて XOR する Teschner らのハッシュです。表のサイズを 2 のべき乗にすると、剰余（<code>%</code>、遅い）をビットマスク（<code>&amp;</code>、速い）で置き換えられます。</p>
+{{CODE:src/SPH.cpp:uint32_t SPH::HashCell(int cx, int cy, int cz) const:}}
+
+<h2>11.4 カウンティングソート</h2>
+<p>「同じハッシュ値の粒子をまとめて取り出したい」を、リストや動的配列なしで実現するのがカウンティングソートです。</p>
+<div class="fig">
+<svg width="600" height="170" viewBox="0 0 600 170" font-family="Consolas, monospace" font-size="11">
+  <text x="0" y="14" font-family="sans-serif" font-weight="bold">① 粒子ごとの key</text>
+  <g transform="translate(0,20)">
+    <g fill="#eef3fa" stroke="#2b5797"><rect x="0" y="0" width="30" height="22"/><rect x="30" y="0" width="30" height="22"/><rect x="60" y="0" width="30" height="22"/><rect x="90" y="0" width="30" height="22"/><rect x="120" y="0" width="30" height="22"/><rect x="150" y="0" width="30" height="22"/></g>
+    <text x="15" y="15" text-anchor="middle">2</text><text x="45" y="15" text-anchor="middle">0</text><text x="75" y="15" text-anchor="middle">2</text><text x="105" y="15" text-anchor="middle">1</text><text x="135" y="15" text-anchor="middle">0</text><text x="165" y="15" text-anchor="middle">2</text>
+    <text x="0" y="36" font-size="9" fill="#555">粒子 i = 0 .. 5</text>
+  </g>
+  <text x="230" y="14" font-family="sans-serif" font-weight="bold">② key ごとに数える → ③ 累積和 = 開始位置</text>
+  <g transform="translate(230,20)">
+    <text x="0" y="15">count:     [2, 1, 3]</text>
+    <text x="0" y="35">cellStart: [0, 2, 3, 6]</text>
+    <text x="0" y="52" font-size="9" fill="#555">key0 は 0〜1, key1 は 2, key2 は 3〜5 に入る</text>
+  </g>
+  <text x="0" y="90" font-family="sans-serif" font-weight="bold">④ 粒子番号を開始位置から順に書き込む</text>
+  <g transform="translate(0,96)">
+    <g fill="#eef7ea" stroke="#6a9a3c"><rect x="0" y="0" width="30" height="22"/><rect x="30" y="0" width="30" height="22"/><rect x="60" y="0" width="30" height="22"/><rect x="90" y="0" width="30" height="22"/><rect x="120" y="0" width="30" height="22"/><rect x="150" y="0" width="30" height="22"/></g>
+    <text x="15" y="15" text-anchor="middle">1</text><text x="45" y="15" text-anchor="middle">4</text><text x="75" y="15" text-anchor="middle">3</text><text x="105" y="15" text-anchor="middle">0</text><text x="135" y="15" text-anchor="middle">2</text><text x="165" y="15" text-anchor="middle">5</text>
+    <text x="0" y="36" font-size="9" fill="#555">sorted[]: key0 の粒子 | key1 | key2 の粒子</text>
+    <text x="230" y="15" font-family="sans-serif" font-size="10.5">key = k の粒子は sorted[cellStart[k] .. cellStart[k+1]) で連続</text>
+    <text x="230" y="36" font-family="sans-serif" font-size="10.5" fill="#555">毎ステップ O(N + tableSize) で再構築、メモリ確保なし</text>
+  </g>
+</svg>
+<div class="cap">図 11-2 カウンティングソートによる格子構築</div>
+</div>
+{{CODE:src/SPH.cpp:void SPH::BuildGrid():}}
+
+<h2>11.5 近傍の走査とハッシュ衝突</h2>
+<p>27 セルそれぞれのハッシュ値を計算し、<code>sorted</code> の該当区間を走査します。ここで 1 つ罠があります。<b>異なるセルが同じハッシュ値を持つ</b>（衝突する）と、27 セルのうち 2 つが同じ区間を指し、同じ粒子を 2 回数えてしまいます。候補粒子の実際のセル座標が「今調べているセル」と一致するか確認して除外します。</p>
+{{CODE:src/SPH.cpp:void SPH::ForEachNeighbor(int i, F&& func) const:}}
+
+<h2>11.6 近傍リストのキャッシュ</h2>
+<p>密度計算と力計算は同じ近傍を使います。走査を 1 回にまとめ、粒子ごとに近傍番号を最大 96 個記録しておくと、以降の計算は単純な配列の走査になります。この変更で実測約 3 倍高速化しました。</p>
+{{CODE:src/SPH.cpp:void SPH::BuildNeighborLists():}}
+<div class="point"><b>ポイント</b> 性能改善の順序は「アルゴリズム（O(N²) → O(N)）→ データ構造（メモリ確保なし、連続アクセス）→ 細かい最適化（剰余をマスクに、平方根を避ける）」です。順序を逆にすると効果が薄くなります。</div>
+
+<div class="exercise"><b>演習 11</b>
+<ol>
+  <li><code>ForEachNeighbor</code> のセル座標一致チェックを外し、ハッシュ表サイズを小さく（例えば 1024）して、密度が過大になる様子を観察してください。</li>
+  <li><code>smoothingRadius</code> を 0.9 にすると近傍数と処理時間はどう変わりますか。理論値（体積比）と比べてください。</li>
+  <li>27 セルではなく「自分のセルだけ」を走査するように変えると、何が起きますか。</li>
+</ol></div>
+
+<!-- =============================== 第 12 章 =============================== -->
+<div class="chap-label">第 12 章</div>
+<h1>境界処理・安定化・エミッタ</h1>
+<div class="chap-lead">流体は地形や壁に当たります。この章では地形との衝突処理、粒子が谷から飛び出さないようにするための 3 つの安定化手法、そして水を投入し続けるエミッタと排水の仕組みを学びます。</div>
+
+<h2>12.1 地形との衝突</h2>
+<p>粒子の中心が「地面の高さ + 粒子半径」より低くなったら、その高さまで押し戻し、地面にめり込む向きの速度成分を取り除きます。</p>
+<div class="fig">
+<svg width="440" height="150" viewBox="0 0 440 150" font-family="sans-serif" font-size="11">
+  <path d="M10,110 Q120,60 230,100 T430,90" fill="none" stroke="#8a6a4a" stroke-width="3"/>
+  <circle cx="150" cy="86" r="12" fill="#fdd" stroke="#c33"/><text x="140" y="60" fill="#c33">めり込み</text>
+  <line x1="150" y1="86" x2="150" y2="50" stroke="#3a3" stroke-width="2" marker-end="url(#ar)"/><text x="154" y="48" fill="#3a3">n</text>
+  <circle cx="150" cy="68" r="12" fill="none" stroke="#2b5797" stroke-dasharray="3,2"/>
+  <line x1="150" y1="86" x2="190" y2="120" stroke="#e90" stroke-width="2" marker-end="url(#ar)"/><text x="192" y="128" fill="#e90">v</text>
+  <line x1="150" y1="86" x2="196" y2="98" stroke="#36c" stroke-width="2" marker-end="url(#ar)"/><text x="200" y="100" fill="#36c">v' (接線成分のみ)</text>
+  <text x="250" y="30" font-size="10.5">1. y を 地面 + 半径 に押し戻す</text>
+  <text x="250" y="48" font-size="10.5">2. v·n &lt; 0 なら v ← v − (v·n) n</text>
+  <text x="250" y="66" font-size="10.5">3. 摩擦: v ← (1 − μf) v</text>
+</svg>
+<div class="cap">図 12-1 地形との衝突処理</div>
+</div>
+<div class="formula">
+  <b>v</b> ← <b>v</b> − (1 + <i>e</i>)(<b>v</b>·<b>n</b>)<b>n</b>&nbsp;&nbsp;（<b>v</b>·<b>n</b> &lt; 0 のとき。<i>e</i> = 反発係数、本プログラムは 0）
+</div>
+<p>(<b>v</b>·<b>n</b>)<b>n</b> は速度の法線方向成分です。これを引くと、地面に沿って滑る成分だけが残ります。<i>e</i> = 1 なら完全弾性衝突（跳ね返る）、0 なら跳ね返らずに滑ります。</p>
+
+<h2>12.2 飛び出しを防ぐ 3 つの安定化</h2>
+<p>基本の衝突処理だけでは、壁際で密度が急上昇したときの圧力の「蹴り」で粒子が谷の外へ飛散しました。次の 3 手法で解消しています。</p>
+<table>
+  <tr><th style="width:22%">手法</th><th>内容</th><th style="width:26%">パラメータ</th></tr>
+  <tr><td>加速度クランプ</td><td>圧力・粘性による加速度の大きさに上限。1 ステップの速度変化を 0.75 m/s に制限（重力は別に加算）</td><td><code>maxAcceleration = 250</code></td></tr>
+  <tr><td>接触ゾーン減衰</td><td>地面から 0.3 m 以内では、地面に近いほど強く速度を減衰（最下部で 6%/ステップ、上端で 0）。跳ね上がりを吸収</td><td><code>contactZone</code>, <code>contactDamping</code></td></tr>
+  <tr><td>孤立粒子の空気抵抗</td><td>近傍が 8 個未満の粒子（飛沫）に 1.5%/ステップの減衰。勢いを失ってすぐ流れに戻る</td><td><code>airDrag</code>, <code>sparseNeighbors</code></td></tr>
+</table>
+{{CODE:src/SPH.cpp:void SPH::ResolveCollision(int i):}}
+<div class="column"><b>コラム: 境界密度の欠損</b> 地面の下には粒子がないので、接地している粒子の密度は本来より低く見積もられ、圧力が弱くなって沈み込みやすくなります。厳密には地形表面に「境界粒子」を並べて密度に寄与させる方法（Akinci ら 2012）がありますが、本プログラムは衝突処理と接触ゾーン減衰でこの効果を吸収しています。</div>
+
+<h2>12.3 エミッタと排水</h2>
+<p>上流の谷底に、粒子の「板」（横 14 × 縦 4）を一定間隔で置き、初速を与えて流します。板同士が重ならないよう、投入間隔は「板が 1 粒子間隔ぶん進む時間 = <i>s</i>/<i>v</i><sub>emit</sub>」にします。完全な格子配置は不自然な規則性を生むので、小さなランダムなずれ（ジッタ）を加えます。</p>
+{{CODE:src/SPH.cpp:void SPH::EmitSheet():}}
+<p>下流端に達した粒子は削除します。配列の途中を消すと詰め直しに O(N) かかるので、「末尾の粒子と入れ替えて末尾を切る」O(1) の方法を使います（順序は保たれませんが問題ありません）。</p>
+{{CODE:src/SPH.cpp:void SPH::RemoveDrained():}}
+
+<div class="exercise"><b>演習 12</b>
+<ol>
+  <li><code>restitution</code> を 0.5 にして、粒子が地面で跳ねる様子を観察してください。</li>
+  <li><code>contactDamping</code> を 0 にすると飛び出しが再発しますか。0.03 ではどうでしょう。</li>
+  <li>エミッタの <code>emitSpeed</code> を 8 にすると投入間隔が短くなります。1 秒あたりの投入粒子数を計算し、最大粒子数に達するまでの時間を予測してから確かめてください。</li>
+</ol></div>
+
+<!-- =============================== 第 13 章 =============================== -->
+<div class="chap-label">第 13 章</div>
+<h1>OpenMP による並列化</h1>
+<div class="chap-lead">SPH の粒子ごとの計算は互いに独立なので、CPU の複数コアで同時に処理できます。この章では、コンパイラ指示子だけで並列化できる OpenMP の使い方と、並列化してよい処理・してはいけない処理の見分け方を学びます。</div>
+
+<h2>13.1 OpenMP とは</h2>
+<p>OpenMP は、<code>#pragma omp parallel for</code> を for 文の前に書くだけで、その繰り返しを複数スレッドに分配してくれる仕組みです。Visual Studio では <code>/openmp</code> オプション（プロジェクト設定「OpenMP のサポート」）を有効にします。</p>
+<pre>#pragma omp parallel for schedule(dynamic, 64)
+for (int i = 0; i &lt; n; ++i)
+{
+    // i 番目の粒子の処理。他の i の結果に依存しないこと
+}</pre>
+<ul>
+  <li><b>schedule(dynamic, 64)</b>: 64 個ずつの塊をスレッドが空き次第取っていく。粒子ごとに近傍数が違い処理時間が不均一なので、静的な等分割より効率がよい。</li>
+  <li>ループ変数は <code>int</code> の符号付き整数、ループ回数はループ開始前に決まっている必要がある。</li>
+</ul>
+
+<h2>13.2 データ競合 — 並列化してよい処理の条件</h2>
+<p>2 つのスレッドが同じ変数に同時に書き込むと、結果が壊れます（データ競合）。並列化してよいのは「各 <i>i</i> が自分の要素にだけ書き、他の要素は読むだけ」の処理です。</p>
+<table>
+  <tr><th style="width:30%">処理</th><th style="width:14%">並列</th><th>理由</th></tr>
+  <tr><td>セル座標・ハッシュ計算</td><td>○</td><td><code>m_cell[i]</code>, <code>m_cellKey[i]</code> に書くだけ</td></tr>
+  <tr><td>カウント・累積和・振り分け</td><td>×</td><td><code>cellStart[key]++</code> は複数の i が同じ key に書く（競合）。粒子数が少ないので逐次で十分</td></tr>
+  <tr><td>近傍リスト作成</td><td>○</td><td>自分のリストに書くだけ。位置は読むだけ</td></tr>
+  <tr><td>密度・圧力</td><td>○</td><td><code>m_density[i]</code>, <code>m_pressure[i]</code> に書くだけ</td></tr>
+  <tr><td>力</td><td>○</td><td><code>m_acc[i]</code> に書くだけ。他粒子の圧力・速度は読むだけ</td></tr>
+  <tr><td>積分・衝突</td><td>○</td><td><code>m_pos[i]</code>, <code>m_vel[i]</code>。地形の高さマップは読むだけ</td></tr>
+  <tr><td>排水（削除）</td><td>×</td><td>配列の詰め直しは順序に依存する</td></tr>
+</table>
+<div class="note"><b>「対称な力を両方の粒子に加算する」最適化はできない</b> 作用・反作用を利用して <i>i</i>-<i>j</i> の対を 1 回だけ計算し両方に足す方法は、<code>m_acc[j]</code> への書き込みが競合するため、そのままでは並列化できません。本プログラムは各粒子が自分の力だけを計算する（対を 2 回計算する）代わりに、競合ゼロで並列化しています。</div>
+
+<h2>13.3 効果</h2>
+<p>8 論理コアの CPU で、12,000 粒子・5 サブステップ/フレームの SPH が 1 フレーム 8〜15 ms で計算できています。粒子数に対して処理時間はほぼ線形に増えるので、コア数が多いマシンではそのぶん粒子を増やせます。さらに 10 倍以上を目指すなら GPU のコンピュートシェーダーへの移植になります（第 18 章）。</p>
+
+<div class="exercise"><b>演習 13</b>
+<ol>
+  <li>プロジェクト設定で OpenMP を無効にし（または <code>#pragma</code> をコメントアウト）、FPS の変化を測ってください。</li>
+  <li><code>schedule(static)</code> に変えると速くなりますか、遅くなりますか。理由を考えてください。</li>
+  <li>環境変数 <code>OMP_NUM_THREADS=2</code> で起動して、スレッド数と性能の関係を調べてください。</li>
+</ol></div>

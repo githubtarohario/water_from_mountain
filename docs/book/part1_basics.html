@@ -1,0 +1,325 @@
+
+<div class="part">
+  <div class="pl">第 I 部</div>
+  <h1>基礎編</h1>
+  <p>3D の数学、GPU が絵を作る仕組み、シェーダー、光と質感。<br>すべての土台となる知識を、このプログラムのコードを見ながら学びます。</p>
+</div>
+
+<!-- =============================== 第 1 章 =============================== -->
+<div class="chap-label">第 1 章</div>
+<h1>3D グラフィックスの数学 — 座標系・ベクトル・行列・変換</h1>
+<div class="chap-lead">3D 空間の点をどうやって画面の 2D に映すのか。この章では、CG のあらゆる場面で使う「座標系」「ベクトル」「行列」と、ワールド → ビュー → 射影という変換の連鎖を、このプログラムのカメラのコードを題材に学びます。</div>
+
+<h2>1.1 座標系 — 右手系と左手系</h2>
+<p>3D 空間の位置は (<i>x</i>, <i>y</i>, <i>z</i>) の 3 つの数で表します。ただし「どちらが上か」「奥行きはどちらが正か」には流儀があり、これを<b>座標系</b>と呼びます。本プログラムは DirectX の慣習に従い、<b>Y 軸が上、左手系</b>を使います。</p>
+<div class="fig">
+<svg width="520" height="190" viewBox="0 0 520 190" font-family="sans-serif" font-size="12">
+  <g transform="translate(110,120)">
+    <line x1="0" y1="0" x2="110" y2="0" stroke="#c33" stroke-width="2" marker-end="url(#ar)"/>
+    <line x1="0" y1="0" x2="0" y2="-95" stroke="#3a3" stroke-width="2"/>
+    <line x1="0" y1="0" x2="-60" y2="55" stroke="#36c" stroke-width="2"/>
+    <text x="115" y="4" fill="#c33">+x</text><text x="-8" y="-100" fill="#3a3">+y</text><text x="-80" y="70" fill="#36c">+z (手前)</text>
+    <text x="-70" y="-110" font-weight="bold">右手系 (OpenGL, Blender)</text>
+  </g>
+  <g transform="translate(370,120)">
+    <line x1="0" y1="0" x2="110" y2="0" stroke="#c33" stroke-width="2"/>
+    <line x1="0" y1="0" x2="0" y2="-95" stroke="#3a3" stroke-width="2"/>
+    <line x1="0" y1="0" x2="60" y2="-55" stroke="#36c" stroke-width="2"/>
+    <text x="115" y="4" fill="#c33">+x</text><text x="-8" y="-100" fill="#3a3">+y</text><text x="66" y="-62" fill="#36c">+z (奥)</text>
+    <text x="-60" y="-110" font-weight="bold">左手系 (DirectX, 本書)</text>
+  </g>
+</svg>
+<div class="cap">図 1-1 右手系と左手系。x を右、y を上にしたとき、z が手前を向くか奥を向くかが違う</div>
+</div>
+<p>左手系では、左手の親指を +x、人差し指を +y に向けたとき、中指が +z を指します。カメラは +z の方向を見る（奥ほど z が大きい）ため、<b>奥行き = z</b> と素直に対応するのが利点です。Blender は右手系・Z が上なので、モデルを持ち込むときは変換が必要です（第 8 章）。</p>
+<div class="point"><b>ポイント</b> 座標系の違いは「符号の向き」だけですが、外積の向き、三角形の表裏（巻き順）、回転の正方向のすべてに影響します。本書では左手系で統一し、右手系のデータを扱うときは明示的に変換します。</div>
+
+<h2>1.2 ベクトルの演算</h2>
+<p>ベクトルは「大きさと向き」を持つ量で、位置・速度・力・法線などすべてベクトルで表します。CG で頻出する演算は次の 4 つです。</p>
+<table>
+  <tr><th style="width:18%">演算</th><th style="width:34%">定義</th><th>CG での用途</th></tr>
+  <tr><td>加減・スカラー倍</td><td>(<i>a</i><sub>x</sub> ± <i>b</i><sub>x</sub>, …)、<i>k</i><b>a</b></td><td>位置の移動、速度の積分 <b>x</b> ← <b>x</b> + <b>v</b>Δ<i>t</i></td></tr>
+  <tr><td>長さ・正規化</td><td>|<b>a</b>| = √(<i>a</i><sub>x</sub><sup>2</sup> + <i>a</i><sub>y</sub><sup>2</sup> + <i>a</i><sub>z</sub><sup>2</sup>)、<b>â</b> = <b>a</b>/|<b>a</b>|</td><td>距離判定、方向だけを取り出す（法線・光源方向）</td></tr>
+  <tr><td>内積</td><td><b>a</b>·<b>b</b> = <i>a</i><sub>x</sub><i>b</i><sub>x</sub> + <i>a</i><sub>y</sub><i>b</i><sub>y</sub> + <i>a</i><sub>z</sub><i>b</i><sub>z</sub> = |<b>a</b>||<b>b</b>| cos <i>θ</i></td><td>2 ベクトルのなす角、明るさ（<b>N</b>·<b>L</b>）、射影</td></tr>
+  <tr><td>外積</td><td><b>a</b>×<b>b</b> = (<i>a</i><sub>y</sub><i>b</i><sub>z</sub> − <i>a</i><sub>z</sub><i>b</i><sub>y</sub>, <i>a</i><sub>z</sub><i>b</i><sub>x</sub> − <i>a</i><sub>x</sub><i>b</i><sub>z</sub>, <i>a</i><sub>x</sub><i>b</i><sub>y</sub> − <i>a</i><sub>y</sub><i>b</i><sub>x</sub>)</td><td>2 ベクトルに垂直なベクトル（面の法線）、三角形の表裏判定</td></tr>
+</table>
+<p>内積は特に重要です。単位ベクトル同士の内積は cos <i>θ</i> そのもので、「どれくらい同じ向きか」を −1〜1 で表します。第 4 章のライティングでは、面の法線 <b>N</b> と光の方向 <b>L</b> の内積で明るさを決めます。</p>
+<p>外積は「2 つのベクトルが張る平面に垂直なベクトル」を返し、その長さは平行四辺形の面積に等しくなります。地形メッシュの法線計算（第 6 章、第 8 章）や三角形の向きの判定に使います。左手系では、<b>a</b> から <b>b</b> へ左手の指を曲げたとき親指の向きが <b>a</b>×<b>b</b> です。</p>
+<p>プログラムでは DirectXMath ライブラリの <code>XMVECTOR</code>（SIMD レジスタに載る 4 成分ベクトル）と <code>XMFLOAT3</code>（メモリ格納用）を使い分けます。例えばカメラのパン操作では、視線方向と上方向の外積で「右方向」を作っています。</p>
+{{CODE:src/Camera.cpp:void Camera::Pan(float dx, float dy):}}
+
+<h2>1.3 行列と変換</h2>
+<p>「点を移動する」「回転する」「拡大縮小する」といった操作は、4×4 の<b>行列</b> <i>M</i> を点に掛けることで表せます。3D なのに 4×4 を使うのは、平行移動を掛け算で表すためで、点は (<i>x</i>, <i>y</i>, <i>z</i>, 1) の 4 成分（<b>同次座標</b>）として扱います。</p>
+<div class="formula">
+  平行移動 <i>T</i>(<i>t</i>) : (<i>x</i>, <i>y</i>, <i>z</i>, 1) → (<i>x</i>+<i>t</i><sub>x</sub>, <i>y</i>+<i>t</i><sub>y</sub>, <i>z</i>+<i>t</i><sub>z</sub>, 1)<br>
+  拡大縮小 <i>S</i>(<i>s</i>) : (<i>x</i>, <i>y</i>, <i>z</i>, 1) → (<i>s</i><sub>x</sub><i>x</i>, <i>s</i><sub>y</sub><i>y</i>, <i>s</i><sub>z</sub><i>z</i>, 1)<br>
+  y 軸回転 <i>R</i><sub>y</sub>(<i>θ</i>) : (<i>x</i>, <i>z</i>) → (<i>x</i> cos<i>θ</i> + <i>z</i> sin<i>θ</i>, −<i>x</i> sin<i>θ</i> + <i>z</i> cos<i>θ</i>)
+</div>
+<p>行列の便利な性質は<b>合成できる</b>ことです。「回転してから移動」は <i>R</i> と <i>T</i> の積 1 つで表せ、何千個の頂点にも同じ 1 つの行列を掛ければ済みます。ただし積の順序を入れ替えると結果が変わります（回転してから移動 ≠ 移動してから回転）。</p>
+<div class="note"><b>行ベクトルと列ベクトル</b> DirectXMath は「行ベクトル × 行列」（<b>v</b>′ = <b>v</b><i>M</i>）の規約で、変換は左から右へ <b>v</b> <i>W</i> <i>V</i> <i>P</i> と並びます。数学の教科書や OpenGL は「行列 × 列ベクトル」（<b>v</b>′ = <i>M</i><b>v</b>）で、順序が逆になります。どちらも同じ計算ですが、行列をメモリに置く順（行優先 / 列優先）と組み合わさって混乱のもとになります。第 3 章で GPU に渡すときの「転置」として再登場します。</div>
+
+<h2>1.4 変換の連鎖 — ワールド・ビュー・射影</h2>
+<p>3D の頂点が画面に映るまでには、3 つの座標系を経由します。</p>
+<div class="fig">
+<svg width="620" height="120" viewBox="0 0 620 120" font-family="sans-serif" font-size="11">
+  <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#555"/></marker></defs>
+  <g>
+    <rect x="5" y="30" width="110" height="50" rx="6" fill="#eef3fa" stroke="#2b5797"/><text x="60" y="52" text-anchor="middle">モデル座標</text><text x="60" y="68" text-anchor="middle" font-size="9">(物体の自分基準)</text>
+    <rect x="165" y="30" width="110" height="50" rx="6" fill="#eef3fa" stroke="#2b5797"/><text x="220" y="52" text-anchor="middle">ワールド座標</text><text x="220" y="68" text-anchor="middle" font-size="9">(シーン全体)</text>
+    <rect x="325" y="30" width="110" height="50" rx="6" fill="#eef3fa" stroke="#2b5797"/><text x="380" y="52" text-anchor="middle">ビュー座標</text><text x="380" y="68" text-anchor="middle" font-size="9">(カメラ基準)</text>
+    <rect x="485" y="30" width="130" height="50" rx="6" fill="#eef3fa" stroke="#2b5797"/><text x="550" y="52" text-anchor="middle">クリップ / NDC</text><text x="550" y="68" text-anchor="middle" font-size="9">(画面 −1〜+1)</text>
+    <line x1="115" y1="55" x2="163" y2="55" stroke="#555" stroke-width="1.5" marker-end="url(#ar)"/><text x="139" y="48" text-anchor="middle" font-size="10">World</text>
+    <line x1="275" y1="55" x2="323" y2="55" stroke="#555" stroke-width="1.5" marker-end="url(#ar)"/><text x="299" y="48" text-anchor="middle" font-size="10">View</text>
+    <line x1="435" y1="55" x2="483" y2="55" stroke="#555" stroke-width="1.5" marker-end="url(#ar)"/><text x="459" y="48" text-anchor="middle" font-size="10">Proj</text>
+    <text x="60" y="105" text-anchor="middle" font-size="9" fill="#666">地形は単位行列</text>
+    <text x="380" y="105" text-anchor="middle" font-size="9" fill="#666">LookAtLH</text>
+    <text x="550" y="105" text-anchor="middle" font-size="9" fill="#666">PerspectiveFovLH</text>
+  </g>
+</svg>
+<div class="cap">図 1-2 頂点が画面に映るまでの座標変換</div>
+</div>
+<ul>
+  <li><b>ワールド行列 <i>W</i></b>: 物体をシーン内に置く（位置・向き・大きさ）。本プログラムの地形は最初からワールド座標で頂点を作るため単位行列（変換なし）です。</li>
+  <li><b>ビュー行列 <i>V</i></b>: 「カメラが原点にあって +z を向いている」状態になるよう、世界全体を動かす行列。<code>XMMatrixLookAtLH(位置, 注視点, 上方向)</code> で作ります。</li>
+  <li><b>射影行列 <i>P</i></b>: 遠近感を付け、画面の範囲を −1〜+1 に正規化する。<code>XMMatrixPerspectiveFovLH(画角, アスペクト比, near, far)</code>。</li>
+</ul>
+{{CODE:src/Camera.cpp:XMMATRIX Camera::GetViewMatrix() const:}}
+{{CODE:src/Camera.cpp:XMMATRIX Camera::GetProjMatrix(float aspect) const:}}
+
+<h3>透視投影の仕組み</h3>
+<p>遠くのものほど小さく見える「遠近感」は、ビュー座標の <i>x</i>, <i>y</i> を奥行き <i>z</i> で割ることで生まれます。射影行列はこの割り算の準備をする行列で、変換後の 4 成分目 <i>w</i> に <i>z</i> が入ります。GPU はラスタライズの直前に自動的に <i>x</i>/<i>w</i>, <i>y</i>/<i>w</i>, <i>z</i>/<i>w</i> を計算します（<b>透視除算</b>）。</p>
+<div class="formula">
+  <i>x</i><sub>ndc</sub> = <i>x</i><sub>view</sub> · <i>P</i><sub>00</sub> / <i>z</i><sub>view</sub>,&nbsp;&nbsp; <i>y</i><sub>ndc</sub> = <i>y</i><sub>view</sub> · <i>P</i><sub>11</sub> / <i>z</i><sub>view</sub><br>
+  <i>P</i><sub>00</sub> = 1 / (aspect · tan(fov<sub>y</sub>/2)),&nbsp;&nbsp; <i>P</i><sub>11</sub> = 1 / tan(fov<sub>y</sub>/2)
+</div>
+<p>この式は第 15 章で「画面の深度から 3D 位置を逆算する」ときに、そのまま逆向きに使います。</p>
+
+<h3>深度値</h3>
+<p>変換後の <i>z</i>/<i>w</i> は 0（near 面）〜1（far 面）の<b>深度値</b>になり、手前の物体が奥の物体を隠す判定（深度テスト、第 2 章）に使われます。深度値は <i>z</i> に対して線形ではなく、近くに精度が集中します。near を小さくしすぎると遠くの精度が落ちて「Z ファイティング」（面がちらつく）が起きるため、本プログラムでは near = 0.5、far = 400 としています。</p>
+
+<h2>1.5 オービットカメラ</h2>
+<p>本プログラムのカメラは、注視点の周りを回る「オービットカメラ」です。カメラの位置を極座標（水平角 <i>θ</i>、仰角 <i>φ</i>、距離 <i>D</i>）で持ち、そこから直交座標を計算します。</p>
+<div class="formula">
+  <b>pos</b> = <b>target</b> + <i>D</i> (cos<i>φ</i> sin<i>θ</i>,&nbsp; sin<i>φ</i>,&nbsp; cos<i>φ</i> cos<i>θ</i>)
+</div>
+{{CODE:src/Camera.cpp:XMFLOAT3 Camera::GetPosition() const:}}
+<p>マウスのドラッグ量を <i>θ</i>, <i>φ</i> の増分に変換すれば回転、ホイールで <i>D</i> を倍率で変えればズームになります。<i>φ</i> を ±89° に制限しているのは、真上（90°）で視線と上方向ベクトルが平行になり <code>LookAt</code> が壊れるのを防ぐためです。</p>
+
+<div class="exercise"><b>演習 1</b>
+<ol>
+  <li><code>Camera.cpp</code> の初期 pitch を 10° に変えて、谷を低い視点から眺めてみましょう。透視投影による遠近感がどう変わりますか。</li>
+  <li><code>GetProjMatrix</code> の画角（<code>m_fovY</code>）を 90° にすると何が起きるか観察し、なぜそうなるか <i>P</i><sub>00</sub>, <i>P</i><sub>11</sub> の式から説明してください。</li>
+  <li>near を 0.01 にして遠くの地形をよく見ると、面のちらつきが起きるか確認してください。</li>
+</ol></div>
+
+<!-- =============================== 第 2 章 =============================== -->
+<div class="chap-label">第 2 章</div>
+<h1>レンダリングパイプラインと DirectX 11</h1>
+<div class="chap-lead">GPU は「頂点の集まり」をどのような手順で「画面のピクセル」に変えるのでしょうか。この章ではその手順（レンダリングパイプライン）を学び、DirectX 11 という API でそれをどう操作するのかを、初期化コード <code>Graphics.cpp</code> に沿って理解します。</div>
+
+<h2>2.1 レンダリングパイプラインの全体像</h2>
+<div class="fig">
+<svg width="640" height="150" viewBox="0 0 640 150" font-family="sans-serif" font-size="10.5">
+  <g>
+    <rect x="5" y="40" width="90" height="46" rx="5" fill="#e4ecf7" stroke="#2b5797"/><text x="50" y="59" text-anchor="middle">入力アセンブラ</text><text x="50" y="74" text-anchor="middle" font-size="9">頂点/インデックス</text>
+    <rect x="113" y="40" width="90" height="46" rx="5" fill="#dff0d8" stroke="#6a9a3c"/><text x="158" y="59" text-anchor="middle">頂点シェーダー</text><text x="158" y="74" text-anchor="middle" font-size="9">座標変換</text>
+    <rect x="221" y="40" width="90" height="46" rx="5" fill="#e4ecf7" stroke="#2b5797"/><text x="266" y="59" text-anchor="middle">ラスタライザ</text><text x="266" y="74" text-anchor="middle" font-size="9">三角形→ピクセル</text>
+    <rect x="329" y="40" width="90" height="46" rx="5" fill="#dff0d8" stroke="#6a9a3c"/><text x="374" y="59" text-anchor="middle">ピクセルシェーダー</text><text x="374" y="74" text-anchor="middle" font-size="9">色の計算</text>
+    <rect x="437" y="40" width="90" height="46" rx="5" fill="#e4ecf7" stroke="#2b5797"/><text x="482" y="59" text-anchor="middle">出力マージャ</text><text x="482" y="74" text-anchor="middle" font-size="9">深度テスト/ブレンド</text>
+    <rect x="545" y="40" width="90" height="46" rx="5" fill="#fbe9d0" stroke="#c77"/><text x="590" y="59" text-anchor="middle">レンダー</text><text x="590" y="74" text-anchor="middle">ターゲット</text>
+    <line x1="95" y1="63" x2="112" y2="63" stroke="#555" marker-end="url(#ar)"/><line x1="203" y1="63" x2="220" y2="63" stroke="#555" marker-end="url(#ar)"/>
+    <line x1="311" y1="63" x2="328" y2="63" stroke="#555" marker-end="url(#ar)"/><line x1="419" y1="63" x2="436" y2="63" stroke="#555" marker-end="url(#ar)"/>
+    <line x1="527" y1="63" x2="544" y2="63" stroke="#555" marker-end="url(#ar)"/>
+    <text x="158" y="110" text-anchor="middle" font-size="9" fill="#3f6a1c">プログラム可能</text>
+    <text x="374" y="110" text-anchor="middle" font-size="9" fill="#3f6a1c">プログラム可能</text>
+    <text x="266" y="110" text-anchor="middle" font-size="9" fill="#555">固定機能 (設定のみ)</text>
+    <text x="482" y="110" text-anchor="middle" font-size="9" fill="#555">固定機能 (設定のみ)</text>
+    <text x="320" y="138" text-anchor="middle" font-size="9.5" fill="#333">頂点シェーダーは「頂点ごと」、ピクセルシェーダーは「ピクセルごと」に GPU の何千ものコアで並列に実行される</text>
+  </g>
+</svg>
+<div class="cap">図 2-1 レンダリングパイプライン（本プログラムで使う段のみ）</div>
+</div>
+<ol>
+  <li><b>入力アセンブラ (IA)</b>: 頂点バッファとインデックスバッファから頂点を読み、三角形に組み立てる。</li>
+  <li><b>頂点シェーダー (VS)</b>: 頂点ごとに実行される小さなプログラム。主に座標変換（第 1 章）を行い、クリップ座標を出力する。</li>
+  <li><b>ラスタライザ (RS)</b>: 透視除算、ビューポート変換、裏面カリングを行い、三角形が覆うピクセルを列挙する。頂点の属性（法線、UV など）はピクセル位置に応じて<b>補間</b>される。</li>
+  <li><b>ピクセルシェーダー (PS)</b>: ピクセルごとに実行され、色を計算する。ライティングやテクスチャはここで行う。</li>
+  <li><b>出力マージャ (OM)</b>: 深度テストで隠面を除去し、ブレンドで既存の色と合成してレンダーターゲットに書く。</li>
+</ol>
+<div class="point"><b>ポイント</b> GPU が速い理由は「同じ小さなプログラムを、大量のデータに対して並列に走らせる」構造にあります。頂点シェーダーとピクセルシェーダーは、隣の頂点や隣のピクセルのことを知らずに独立して動きます。この制約を理解すると、シェーダーで「できること・できないこと」が見えてきます。</div>
+
+<h2>2.2 深度テスト、カリング、ブレンド</h2>
+<h3>深度テスト</h3>
+<p>手前の物体が奥の物体を隠すには、ピクセルごとに「今まで描いた中で一番手前の深度」を覚えておく必要があります。これが<b>深度バッファ</b>です。新しいピクセルの深度が記録より小さい（手前）ときだけ色と深度を更新します。本プログラムでは 24bit 深度 + 8bit ステンシルの <code>D24_UNORM_S8_UINT</code> 形式を使い、比較関数は LESS です。</p>
+<h3>裏面カリング</h3>
+<p>閉じた物体の裏側の面は見えないので、描画前に捨てると速くなります。三角形の表裏は、画面上での頂点の並び順（<b>巻き順</b>）で判定します。DirectX の既定では「画面上で時計回り」が表です。地形メッシュは上から見て時計回りになるよう頂点を並べており（第 6 章）、粒子のビルボードや全画面パスではカリングを無効にしています。</p>
+<h3>ブレンド</h3>
+<p>半透明の物体は、既に描かれている色と混ぜて書き込みます。もっとも基本的なアルファブレンドは次式です。</p>
+<div class="formula">
+  result = src · <i>α</i> + dst · (1 − <i>α</i>)
+</div>
+<p>本プログラムでは、水面を地形の上に <i>α</i> = 0.9 で合成するとき（第 15 章）に使います。</p>
+
+<h2>2.3 DirectX 11 の主要オブジェクト</h2>
+<p>DirectX 11（Direct3D 11）は、GPU を操作するための API です。登場するオブジェクトは多いですが、役割で分類すると整理できます。</p>
+<table>
+  <tr><th style="width:26%">オブジェクト</th><th>役割</th></tr>
+  <tr><td><code>ID3D11Device</code></td><td>GPU の「工場」。バッファ・テクスチャ・シェーダー・ステートなどのリソースを<b>作る</b></td></tr>
+  <tr><td><code>ID3D11DeviceContext</code></td><td>GPU への「命令書」。リソースをパイプラインに<b>セットして描画命令を出す</b></td></tr>
+  <tr><td><code>IDXGISwapChain</code></td><td>画面に表示するバッファの管理。描き終わった裏バッファを表に出す（Present）</td></tr>
+  <tr><td>バッファ / テクスチャ</td><td>GPU 上のメモリ。頂点、インデックス、定数、画像などのデータ本体</td></tr>
+  <tr><td>ビュー（RTV / DSV / SRV）</td><td>リソースを「どの用途で使うか」を示す窓口。同じテクスチャを描画先（RTV）としても読み取り元（SRV）としても使える</td></tr>
+  <tr><td>ステート（RS / DS / Blend / Sampler）</td><td>固定機能段の設定をまとめたオブジェクト。作っておいて切り替える</td></tr>
+  <tr><td>シェーダー</td><td>コンパイル済みの GPU プログラム</td></tr>
+</table>
+
+<h3>初期化の流れ</h3>
+<p><code>Graphics::Initialize</code> は、デバイスとスワップチェーンを同時に作り、バックバッファ用のレンダーターゲットビュー、深度バッファ、共通ステートを準備します。</p>
+{{CODE:src/Graphics.cpp:bool Graphics::Initialize(HWND hWnd, int width, int height):}}
+<p>注目点をいくつか挙げます。</p>
+<ul>
+  <li><code>D3D_FEATURE_LEVEL_11_0</code> を要求しています。これは Shader Model 5.0 と、後で使う構造化バッファ・インスタンシングを保証する水準です。</li>
+  <li>Debug ビルドでは<b>デバッグレイヤー</b>を有効にします。API の誤用（例えば SRV にバインドしたままのテクスチャへ描画する）を出力ウィンドウに警告してくれる、開発時の強力な味方です。SDK のデバッグコンポーネントが無い環境では失敗するので、その場合はフラグなしで作り直しています。</li>
+  <li><code>ComPtr</code> は COM オブジェクトのスマートポインタで、スコープを抜けると自動で <code>Release</code> します。DirectX のリソース管理はこれに任せるのが定石です。</li>
+</ul>
+
+<h3>ステートオブジェクト</h3>
+<p>固定機能段の設定は「ステートオブジェクト」として事前に作り、描画時に切り替えます。本プログラムでは次の組み合わせを用意しています。</p>
+{{CODE:src/Graphics.cpp:bool Graphics::CreateCommonStates():}}
+
+<h2>2.4 フレームの流れ</h2>
+<p>1 フレームの描画は「クリア → 描画命令 → Present」の繰り返しです。</p>
+{{CODE:src/Graphics.cpp:void Graphics::BeginFrame(const float clearColor[4]):}}
+<p>Present の引数 1 は<b>垂直同期</b>（モニタのリフレッシュに合わせる）を意味し、画面の裂け（ティアリング）を防ぎます。代わりにフレームレートはモニタの周波数（60 Hz や 120 Hz）で頭打ちになります。</p>
+
+<h2>2.5 CPU から GPU へのデータ転送</h2>
+<p>GPU のメモリは CPU から直接触れません。用途に応じて 3 種類の作り方を使い分けます。</p>
+<table>
+  <tr><th style="width:22%">Usage</th><th style="width:30%">特徴</th><th>本プログラムでの用途</th></tr>
+  <tr><td>IMMUTABLE</td><td>作成時にデータを渡し、以後変更不可。最速</td><td>地形の頂点・インデックスバッファ</td></tr>
+  <tr><td>DEFAULT</td><td>GPU が読み書き。CPU からは <code>UpdateSubresource</code> でコピー</td><td>テクスチャ、深度テクスチャ</td></tr>
+  <tr><td>DYNAMIC</td><td>CPU が毎フレーム書き換える。<code>Map / Unmap</code></td><td>定数バッファ、粒子の StructuredBuffer</td></tr>
+</table>
+{{CODE:src/Graphics.cpp:void Graphics::UpdateBuffer(ID3D11Buffer* buf, const void* data, size_t byteSize):}}
+<p><code>D3D11_MAP_WRITE_DISCARD</code> は「前の内容は捨ててよいので、新しいメモリ領域をすぐ割り当ててほしい」という指定です。GPU がまだ前フレームのデータを読んでいる最中でも CPU が待たされないため、毎フレーム更新するバッファの定石です。</p>
+
+<div class="exercise"><b>演習 2</b>
+<ol>
+  <li>クリア色（<code>main.cpp</code> の <code>clearColor</code>）を空色に変えてみましょう。</li>
+  <li>地形の描画で <code>GetRasterizerNoCull()</code> を使うようにし、地形の裏側（下から見上げる）が描かれるようになることを確認してください。次に、カメラを地形の下に潜らせて違いを観察しましょう。</li>
+  <li>深度ステートを <code>GetDepthStateDisabled()</code> にして地形を描くと、何が起きますか。描画順との関係を考えてください。</li>
+</ol></div>
+
+<!-- =============================== 第 3 章 =============================== -->
+<div class="chap-label">第 3 章</div>
+<h1>シェーダー入門 — HLSL で GPU をプログラムする</h1>
+<div class="chap-lead">シェーダーは GPU 上で走る小さなプログラムです。この章では HLSL の基本文法、頂点シェーダーとピクセルシェーダーの書き方、CPU からデータを渡す定数バッファ、そして本プログラムが多用する「頂点バッファを使わない描画」を学びます。</div>
+
+<h2>3.1 HLSL の基本</h2>
+<p>HLSL（High Level Shading Language）は C に似た文法で、<code>float3</code>, <code>float4x4</code> のようなベクトル・行列型が組み込まれています。よく使う要素を挙げます。</p>
+<table>
+  <tr><th style="width:30%">要素</th><th>例と意味</th></tr>
+  <tr><td>ベクトル型</td><td><code>float2 float3 float4 int2 uint</code>。<code>v.xyz</code>, <code>v.xy</code> のように成分を自由に取り出せる（スウィズル）</td></tr>
+  <tr><td>行列型と積</td><td><code>float4x4 M; mul(v, M)</code>。<code>M._m00</code> で要素にアクセス</td></tr>
+  <tr><td>組み込み関数</td><td><code>dot cross normalize length saturate lerp pow exp sqrt clamp</code></td></tr>
+  <tr><td>セマンティクス</td><td><code>: POSITION</code>, <code>: SV_POSITION</code> など。入出力の「意味」をパイプラインに伝えるラベル</td></tr>
+  <tr><td>リソース</td><td><code>Texture2D</code>, <code>SamplerState</code>, <code>StructuredBuffer&lt;T&gt;</code>, <code>cbuffer</code></td></tr>
+  <tr><td>レジスタ</td><td><code>register(b0)</code>（定数）, <code>register(t0)</code>（テクスチャ/バッファ）, <code>register(s0)</code>（サンプラー）。CPU 側の <code>PSSetShaderResources(0, ...)</code> の番号と対応</td></tr>
+</table>
+
+<h2>3.2 頂点シェーダーとピクセルシェーダー</h2>
+<p>もっとも基本的な例として、地形のシェーダーを見ます。頂点シェーダーは頂点を受け取り、クリップ座標（<code>SV_POSITION</code>）と、ピクセルシェーダーに渡したい属性を出力します。</p>
+{{CODE:shaders/Terrain.hlsl:struct VSIn:};}}
+{{CODE:shaders/Terrain.hlsl:struct PSIn:};}}
+{{CODE:shaders/Terrain.hlsl:PSIn VSMain(VSIn i):}}
+<p><code>SV_POSITION</code> は「システム値」セマンティクスで、ラスタライザが位置として使います。それ以外の <code>TEXCOORD</code><i>n</i> は自由な用途の属性で、三角形内で線形補間されてピクセルシェーダーに届きます。ピクセルシェーダーは補間された属性から色を計算し、<code>SV_Target</code>（レンダーターゲットへの出力）を返します。詳しい陰影の計算は第 4 章で扱います。</p>
+
+<h2>3.3 定数バッファ — CPU から GPU へ値を渡す</h2>
+<p>ビュー行列や光源方向のように「フレーム中は一定でシェーダー全体から参照する値」は、<b>定数バッファ</b>にまとめて渡します。本プログラムは 1 つの構造体 <code>FrameConstants</code> をすべてのシェーダーで共有しています。</p>
+{{CODE:src/FrameConstants.h:struct FrameConstants:};}}
+{{CODE:shaders/Common.hlsli:cbuffer CBFrame : register(b0):};}}
+<div class="note"><b>16 バイト境界</b> 定数バッファは 16 バイト（float4）単位で並べる規則があります。<code>float3</code> の後に <code>float</code> を置くと詰められますが、<code>float3</code> を 2 つ続けると 2 つ目は次の 16 バイトに送られ、C++ 側の構造体とずれます。本プログラムはすべて <code>float4</code> / <code>float4x4</code> で構成して、この問題を避けています。</div>
+
+<h3>行列の転置</h3>
+<p>第 1 章で触れたとおり、DirectXMath は行優先で <b>v</b><i>M</i> の規約、HLSL の既定は列優先パッキングです。行列をそのまま転送すると HLSL は転置された行列として読んでしまいます。そこで CPU 側で<b>転置してから</b>転送すると、HLSL 側で自然に <code>mul(float4(v,1), M)</code> と書けます。</p>
+{{CODE:src/main.cpp:void UpdateFrameConstants():    }}}
+
+<h2>3.4 頂点バッファを使わない描画</h2>
+<p>頂点シェーダーには、頂点バッファの代わりに「何番目の頂点か」（<code>SV_VertexID</code>）と「何番目のインスタンスか」（<code>SV_InstanceID</code>）を受け取る方法があります。座標を番号から計算できるなら、頂点バッファは不要です。本プログラムはこれを 2 か所で使います。</p>
+<h3>全画面三角形</h3>
+<p>後処理（ぼかしや合成）では画面全体を覆う面を描きます。四角形（三角形 2 枚）でもよいのですが、大きな三角形 1 枚のほうが対角線上でピクセルが 2 回処理される無駄がなく、頂点バッファも要りません。</p>
+{{CODE:shaders/Common.hlsli:FullscreenVSOut VSFullscreen(uint vid : SV_VertexID):}}
+<p>vid = 0, 1, 2 に対して uv は (0,0), (2,0), (0,2) となり、クリップ座標は (−1,1), (3,1), (−1,−3)。画面（−1〜1）の外にはみ出した部分はクリップされ、画面全体がちょうど覆われます。</p>
+<h3>インスタンシング</h3>
+<p>同じ形状を何千個も描くとき、1 個ずつ描画命令を出すと CPU がボトルネックになります。<code>DrawInstanced(頂点数, インスタンス数)</code> は 1 回の命令で N 個描き、頂点シェーダーは <code>SV_InstanceID</code> で「今どの個体か」を知ります。粒子の描画（第 14 章）では、粒子の位置を <code>StructuredBuffer</code> に入れておき、<code>Particles[iid]</code> で読み出します。</p>
+
+<h2>3.5 シェーダーのコンパイル</h2>
+<p>HLSL は実行前にバイトコードへコンパイルします。本プログラムは起動時に <code>D3DCompileFromFile</code> でコンパイルするため、<b>HLSL を書き換えて再起動するだけ</b>で結果を確認できます（C++ の再ビルドは不要）。コンパイルエラーはメッセージボックスに表示されます。</p>
+{{CODE:src/Graphics.cpp:bool Graphics::CompileShaderFromFile(const std::wstring& path, const char* entryPoint,:}}
+
+<div class="exercise"><b>演習 3</b>
+<ol>
+  <li><code>Terrain.hlsl</code> の <code>PSMain</code> の最後を <code>return float4(n * 0.5 + 0.5, 1);</code> に変えて、法線を色として表示してみましょう（デバッグでよく使う技法です）。</li>
+  <li><code>UpdateFrameConstants</code> の <code>XMMatrixTranspose</code> を外すと何が起きるか試し、理由を説明してください。</li>
+  <li><code>VSFullscreen</code> の 3 頂点が画面全体を覆うことを、紙に −1〜1 の正方形と三角形を描いて確かめてください。</li>
+</ol></div>
+
+<!-- =============================== 第 4 章 =============================== -->
+<div class="chap-label">第 4 章</div>
+<h1>ライティングとテクスチャ</h1>
+<div class="chap-lead">同じ形でも、光の当たり方と表面の模様で見え方はまったく変わります。この章では、面の向きと光の方向から明るさを求める「ライティング」の基本モデルと、画像を面に貼る「テクスチャマッピング」を、地形と水面の描画コードで学びます。</div>
+
+<h2>4.1 法線 — 面の向き</h2>
+<p>ライティングの出発点は、面がどちらを向いているかを表す単位ベクトル、<b>法線</b> <b>N</b> です。三角形の法線は 2 辺の外積で求まりますが、滑らかな曲面に見せたい場合は、頂点ごとに周囲の面の法線を平均した「頂点法線」を持たせ、ラスタライザに補間させます。高さマップ地形では、高さの偏微分から直接求めることができます（第 6 章）。</p>
+
+<h2>4.2 ランバート拡散反射</h2>
+<p>ざらざらした面は光をあらゆる方向に均等に散らします（拡散反射）。その明るさは、面に光が「どれだけ正面から当たるか」で決まり、法線 <b>N</b> と光源へ向かう方向 <b>L</b> の内積で表せます。</p>
+<div class="formula">
+  <i>I</i><sub>diffuse</sub> = max(0, <b>N</b>·<b>L</b>) = max(0, cos <i>θ</i>)
+</div>
+<div class="fig">
+<svg width="420" height="130" viewBox="0 0 420 130" font-family="sans-serif" font-size="11">
+  <line x1="20" y1="100" x2="400" y2="100" stroke="#888" stroke-width="3"/>
+  <line x1="120" y1="100" x2="120" y2="20" stroke="#3a3" stroke-width="2" marker-end="url(#ar)"/><text x="126" y="28" fill="#3a3">N</text>
+  <line x1="120" y1="100" x2="190" y2="35" stroke="#e90" stroke-width="2" marker-end="url(#ar)"/><text x="195" y="40" fill="#e90">L</text>
+  <path d="M120,70 A30,30 0 0 1 143,79" fill="none" stroke="#555"/><text x="140" y="70">θ</text>
+  <text x="240" y="60">明るさ = cos θ</text><text x="240" y="80" font-size="10" fill="#555">θ = 0 (真正面) で最大、90° で 0</text>
+</svg>
+<div class="cap">図 4-1 ランバート拡散反射</div>
+</div>
+<p>max(0, …) は、光が裏側から当たる場合（内積が負）を 0 にするためです。実際にはこれに<b>環境光</b>（あらゆる方向から回り込む光の近似）を足し、真っ暗な部分を作らないようにします。地形シェーダーでは、上を向いた面ほど空からの光を受けるという「半球ライティング」風の環境光を使っています。</p>
+{{CODE:shaders/Terrain.hlsl:float4 PSMain(PSIn i) : SV_Target:}}
+
+<h2>4.3 鏡面反射 — Blinn-Phong</h2>
+<p>つやのある面には、光源の像がハイライトとして映ります。視線方向 <b>V</b> と光源方向 <b>L</b> のちょうど中間の向き <b>H</b>（ハーフベクトル）を法線がどれだけ向いているかで、ハイライトの強さを近似するのが Blinn-Phong モデルです。</p>
+<div class="formula">
+  <b>H</b> = normalize(<b>L</b> + <b>V</b>),&nbsp;&nbsp; <i>I</i><sub>spec</sub> = max(0, <b>N</b>·<b>H</b>)<sup><i>n</i></sup>
+</div>
+<p>指数 <i>n</i> が大きいほどハイライトは小さく鋭くなります（粒子: 40、水面: 48）。</p>
+
+<h2>4.4 フレネル反射</h2>
+<p>水面を斜めから見ると鏡のように空を映し、真上から見ると透けて見えます。この「見る角度で反射率が変わる」現象がフレネル反射で、Schlick の近似式で簡単に計算できます。</p>
+<div class="formula">
+  <i>F</i> = <i>F</i><sub>0</sub> + (1 − <i>F</i><sub>0</sub>)(1 − <b>N</b>·<b>V</b>)<sup>5</sup>
+</div>
+<p><i>F</i><sub>0</sub> は正面から見たときの反射率（水は約 0.02〜0.06）です。第 15 章の水面シェーダーでは指数 4、<i>F</i><sub>0</sub> = 0.06 とし、フレネル項の分だけ空の色を混ぜています。</p>
+
+<h2>4.5 テクスチャマッピング</h2>
+<p>面に画像を貼るには、各頂点に「画像のどの位置に対応するか」を示す<b>テクスチャ座標</b>（UV、0〜1）を持たせます。ラスタライザが UV を補間し、ピクセルシェーダーで <code>Texture.Sample(sampler, uv)</code> と書けば、その位置の色が取れます。</p>
+<h3>サンプラーの設定</h3>
+<table>
+  <tr><th style="width:26%">設定</th><th>意味</th><th style="width:30%">本プログラム</th></tr>
+  <tr><td>アドレスモード</td><td>UV が 0〜1 を外れたときの扱い。WRAP は繰り返し、CLAMP は端で固定</td><td>地形: WRAP、深度テクスチャ: CLAMP</td></tr>
+  <tr><td>フィルタ</td><td>ピクセルの中心が画素の間にあるときの補間。POINT は最近傍、LINEAR は線形補間、ANISOTROPIC は斜めから見た面の補間を改善</td><td>地形: 異方性 8、深度: POINT</td></tr>
+  <tr><td>ミップマップ</td><td>画像を 1/2, 1/4, … と縮小した系列を用意し、遠くの面には小さい画像を使う。縮小時のちらつき（エイリアシング）を防ぐ</td><td><code>GenerateMips</code> で自動生成</td></tr>
+</table>
+<div class="column"><b>コラム: なぜミップマップが必要か</b> 遠くの地形では、1 ピクセルの中にテクスチャの何十画素分もが収まります。そのうち 1 点だけを拾うと、カメラが少し動くたびに拾う画素が変わってちらつきます。あらかじめ縮小して平均した画像（ミップ）を使えば、1 ピクセルに対応する範囲の平均色が得られます。GPU は UV の変化率から適切なミップレベルを自動で選びます。</div>
+<h3>繰り返し感の低減</h3>
+<p>1 枚のテクスチャを WRAP で敷き詰めると、同じ模様の繰り返しが目につきます。地形シェーダーでは、別スケール・別オフセットでもう一度サンプルして乗算し、周期を崩しています。</p>
+
+<div class="exercise"><b>演習 4</b>
+<ol>
+  <li><code>main.cpp</code> の光源方向 <code>lightW</code> を変えて、谷の影の付き方を観察してください。真上 (0,1,0) にすると平坦に見えるのはなぜでしょう。</li>
+  <li><code>Terrain.hlsl</code> に Blinn-Phong の鏡面反射を追加して、濡れた岩のような質感にしてみましょう（指数 20〜60 で試す）。</li>
+  <li>地形の UV スケール（<code>Terrain.cpp</code> の <code>uvScale</code>）を 0.05 と 0.3 にして、テクスチャの繰り返し感と細かさのトレードオフを比べてください。</li>
+</ol></div>

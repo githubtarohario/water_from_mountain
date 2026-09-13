@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>DirectX 11 で学ぶ CG と流体シミュレーション</title>
+<style>
+  @page { size: A4; margin: 20mm 17mm 20mm 17mm; }
+  html { font-family: "Yu Gothic UI", "Yu Gothic", "Meiryo", "BIZ UDPGothic", sans-serif; font-size: 10.5pt; line-height: 1.7; color: #222; }
+  body { margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 4px; page-break-before: always; color: #1a3c6e; }
+  .chap-label { font-size: 11pt; color: #2b5797; letter-spacing: 2px; margin-top: 6mm; page-break-before: always; }
+  .chap-label + h1 { page-break-before: avoid; }
+  .src-title + pre { margin-top: 0; }
+  .chap-lead { border-left: 5px solid #2b5797; background: #eef3fa; padding: 8px 12px; margin: 10px 0 16px; font-size: 10pt; }
+  .part { page-break-before: always; text-align: center; padding-top: 80mm; }
+  .part .pl { font-size: 13pt; color: #2b5797; letter-spacing: 4px; }
+  .part h1 { page-break-before: auto; font-size: 30pt; margin-top: 6mm; border: none; }
+  .part p { color: #555; margin-top: 12mm; font-size: 10.5pt; }
+  h2 { font-size: 14.5pt; border-left: 6px solid #2b5797; padding-left: 8px; margin: 22px 0 8px; color: #1a3c6e; page-break-after: avoid; }
+  h3 { font-size: 11.5pt; margin: 16px 0 6px; color: #2b5797; page-break-after: avoid; }
+  h4 { font-size: 10.5pt; margin: 12px 0 4px; color: #333; page-break-after: avoid; }
+  p { margin: 5px 0 9px; text-align: justify; }
+  ul, ol { margin: 4px 0 9px; padding-left: 22px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 12px; font-size: 9.5pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #b8c4d6; padding: 4px 6px; vertical-align: top; }
+  th { background: #e4ecf7; text-align: left; }
+  tr:nth-child(even) td { background: #f7f9fc; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 9.3pt; background: #eef1f5; padding: 0 3px; border-radius: 2px; }
+  pre { font-family: Consolas, "Courier New", monospace; font-size: 8.4pt; background: #f6f8fb; border: 1px solid #d5dbe5; border-left: 4px solid #2b5797; padding: 8px 10px; white-space: pre-wrap; line-height: 1.42; margin: 6px 0 10px; }
+  pre.src { border-left-color: #6a9a3c; }
+  .src-title { font-family: Consolas, monospace; font-size: 8.5pt; color: #4a6a2c; background: #e9f2df; border: 1px solid #c9dcb6; border-bottom: none; padding: 2px 8px; margin-top: 8px; display: block; width: max-content; page-break-after: avoid; break-after: avoid; }
+  .formula { font-family: "Cambria Math", "Times New Roman", serif; font-size: 11pt; background: #fbfbfd; border: 1px dashed #b8c4d6; padding: 8px 14px; margin: 6px 0 10px; page-break-inside: avoid; }
+  .formula i { font-style: italic; }
+  .point { background: #eef7ea; border-left: 5px solid #6a9a3c; padding: 7px 11px; margin: 10px 0; page-break-inside: avoid; }
+  .point b:first-child { color: #3f6a1c; }
+  .note { background: #fff8e6; border-left: 5px solid #e0a800; padding: 7px 11px; margin: 10px 0; font-size: 9.8pt; page-break-inside: avoid; }
+  .column { background: #f3f0fa; border: 1px solid #cfc6e6; padding: 8px 12px; margin: 12px 0; font-size: 9.8pt; page-break-inside: avoid; }
+  .column b:first-child { color: #5a3e9a; }
+  .exercise { border: 1px solid #b8c4d6; padding: 8px 12px; margin: 14px 0 6px; page-break-inside: avoid; }
+  .exercise b:first-child { color: #1a3c6e; }
+  .fig { text-align: center; margin: 10px 0 14px; page-break-inside: avoid; }
+  .fig img { max-width: 100%; border: 1px solid #ccd; }
+  .fig svg { max-width: 100%; }
+  .fig .cap { font-size: 9pt; color: #555; margin-top: 3px; }
+  .two { display: flex; gap: 10px; align-items: flex-start; }
+  .two > * { flex: 1; }
+  .cover { text-align: center; padding-top: 70mm; }
+  .cover .t1 { font-size: 30pt; font-weight: bold; color: #1a3c6e; line-height: 1.3; }
+  .cover .t2 { font-size: 15pt; color: #444; margin: 10px 0 30px; }
+  .cover .t3 { font-size: 11pt; color: #666; line-height: 2; }
+  .toc { font-size: 10pt; }
+  .toc .p { font-weight: bold; color: #1a3c6e; margin-top: 8px; }
+  .toc ul { list-style: none; padding-left: 14px; margin: 2px 0; }
+  .toc li { margin: 1px 0; }
+  .kv td:first-child { width: 30%; font-weight: bold; background: #f0f4fa; }
+  .small { font-size: 9pt; color: #555; }
+  .center { text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="t1">DirectX 11 で学ぶ<br>CG と流体シミュレーション</div>
+  <div class="t2">「山から粒子が落ちる」プログラムで読み解く<br>3D グラフィックス・地形生成・SPH・表面生成</div>
+  <div class="t3">
+    対象プログラム: water_from_mountain（C++ / Direct3D 11 / HLSL）<br>
+    https://github.com/githubtarohario/water_from_mountain<br>
+    2026 年 9 月
+  </div>
+</div>
+
+<h1>本書について</h1>
+<h2>本書のねらい</h2>
+<p>本書は、1 本の完結したプログラム「山から粒子が落ちる」を教材として、3D コンピュータグラフィックス（CG）と粒子法による流体シミュレーションを<b>基礎から</b>解説する教科書です。このプログラムは、岩肌の山に刻まれた谷を水の粒子が流れ落ち、粒子の集まりから水面を生成して描画します。見た目はシンプルですが、その中には CG と物理シミュレーションの主要な技術がひととおり詰まっています。</p>
+<ul>
+  <li>座標系・ベクトル・行列と、3D をスクリーンに映すまでの<b>変換の数学</b></li>
+  <li>GPU が絵を作る手順（<b>レンダリングパイプライン</b>）と DirectX 11 の使い方</li>
+  <li>GPU 上で動く小さなプログラム、<b>シェーダー（HLSL）</b></li>
+  <li>光と影、テクスチャによる<b>質感表現</b></li>
+  <li>ノイズによる<b>地形・テクスチャの手続き的生成</b>、外部モデルの取り込み</li>
+  <li>粒子で水を表す <b>SPH 法</b>と、それを速く安定に動かす工夫</li>
+  <li>粒子の集まりを 1 枚の水面として見せる<b>スクリーンスペース流体レンダリング</b></li>
+</ul>
+<p>各技術は「なぜ必要か → 考え方 → 数式 → 実際のコード」の順に説明します。掲載しているコードは本書の生成時にソースファイルから自動的に抜き出しており、リポジトリの実装と一致しています。</p>
+
+<h2>想定する読者</h2>
+<p>C++ の基本文法（クラス、参照、STL の <code>vector</code>）が読めること、高校数学（三角関数、ベクトル）を一度は学んだことを前提にします。行列や微分は必要になった箇所で説明します。DirectX やシェーダーの経験は不要です。</p>
+
+<h2>本書の構成</h2>
+<table>
+  <tr><th style="width:18%">部</th><th>内容</th></tr>
+  <tr><td>第 I 部 基礎編</td><td>3D の数学、レンダリングパイプラインと DirectX 11、シェーダー、ライティングとテクスチャ</td></tr>
+  <tr><td>第 II 部 地形編</td><td>ノイズ、高さマップ地形、テクスチャの生成と読み込み、Blender からのメッシュ取り込み</td></tr>
+  <tr><td>第 III 部 流体編</td><td>粒子法の考え方、SPH の理論と実装、近傍探索、境界と安定化、並列化</td></tr>
+  <tr><td>第 IV 部 表現編</td><td>粒子の描画（スフィア・インポスター）、表面生成、カメラと操作、メインループ</td></tr>
+  <tr><td>第 V 部 発展編</td><td>性能とデバッグ、発展課題</td></tr>
+  <tr><td>付録</td><td>数学のまとめ、ファイル構成、用語集、参考文献</td></tr>
+</table>
+
+<h2>プログラムの入手と実行</h2>
+<table class="kv">
+  <tr><td>リポジトリ</td><td>https://github.com/githubtarohario/water_from_mountain</td></tr>
+  <tr><td>必要環境</td><td>Windows 10/11、DirectX 11 対応 GPU、Visual Studio 2019/2022（C++ デスクトップ開発）</td></tr>
+  <tr><td>ビルド</td><td><code>MountainParticles.sln</code> を Release | x64 でビルド、または <code>build.bat</code></td></tr>
+  <tr><td>操作</td><td>左ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム / 1: 粒子表示 / 2: 表面生成 / Space: 一時停止 / R: リセット</td></tr>
+</table>
+<div class="two">
+  <div class="fig"><img src="{{IMG_PARTICLES}}"><div class="cap">粒子表示モード（速度で青→緑→赤に着色）</div></div>
+  <div class="fig"><img src="{{IMG_SURFACE}}"><div class="cap">表面生成モード（粒子から水面を作って描画）</div></div>
+</div>
+
+<h2>本書の記法</h2>
+<ul>
+  <li>ベクトルは太字（<b>v</b>）、スカラーは斜体（<i>x</i>）、行列は大文字斜体（<i>M</i>）で表します。</li>
+  <li>コードの引用は緑の枠で、その上にファイル名を示します。</li>
+  <li><span style="background:#eef7ea;padding:0 4px">ポイント</span> は必ず押さえてほしい要点、<span style="background:#fff8e6;padding:0 4px">注意</span> は間違えやすい点、<span style="background:#f3f0fa;padding:0 4px">コラム</span> は補足の読み物です。</li>
+  <li>各章末の<b>演習</b>は、プログラムを改造して理解を確かめる課題です。</li>
+</ul>
+
+<h1>目次</h1>
+<div class="toc">
+  <div class="p">本書について</div>
+  <div class="p">第 I 部 基礎編</div>
+  <ul>
+    <li>第 1 章 3D グラフィックスの数学 — 座標系・ベクトル・行列・変換</li>
+    <li>第 2 章 レンダリングパイプラインと DirectX 11</li>
+    <li>第 3 章 シェーダー入門 — HLSL で GPU をプログラムする</li>
+    <li>第 4 章 ライティングとテクスチャ</li>
+  </ul>
+  <div class="p">第 II 部 地形編</div>
+  <ul>
+    <li>第 5 章 ノイズと手続き的生成</li>
+    <li>第 6 章 高さマップ地形の設計と生成</li>
+    <li>第 7 章 テクスチャの生成と画像ファイルの読み込み</li>
+    <li>第 8 章 外部メッシュの取り込み — OBJ と Blender</li>
+  </ul>
+  <div class="p">第 III 部 流体編</div>
+  <ul>
+    <li>第 9 章 粒子で流体を表す — 粒子法の考え方</li>
+    <li>第 10 章 SPH の理論と実装</li>
+    <li>第 11 章 近傍探索 — 空間ハッシュとカウンティングソート</li>
+    <li>第 12 章 境界処理・安定化・エミッタ</li>
+    <li>第 13 章 OpenMP による並列化</li>
+  </ul>
+  <div class="p">第 IV 部 表現編</div>
+  <ul>
+    <li>第 14 章 粒子の描画 — インスタンシングとスフィア・インポスター</li>
+    <li>第 15 章 表面生成 — スクリーンスペース流体レンダリング</li>
+    <li>第 16 章 カメラ・入力・メインループ</li>
+  </ul>
+  <div class="p">第 V 部 発展編</div>
+  <ul>
+    <li>第 17 章 性能とデバッグ</li>
+    <li>第 18 章 発展課題</li>
+  </ul>
+  <div class="p">付録</div>
+  <ul>
+    <li>付録 A 数学のまとめ</li>
+    <li>付録 B ファイル構成と API 要約</li>
+    <li>付録 C 用語集</li>
+    <li>付録 D 参考文献</li>
+  </ul>
+</div>

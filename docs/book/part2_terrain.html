@@ -1,0 +1,246 @@
+
+<div class="part">
+  <div class="pl">第 II 部</div>
+  <h1>地形編</h1>
+  <p>乱数から「自然に見える形」を作るノイズの技術、<br>高さマップによる地形、テクスチャ、そして Blender からのモデル取り込み。</p>
+</div>
+
+<!-- =============================== 第 5 章 =============================== -->
+<div class="chap-label">第 5 章</div>
+<h1>ノイズと手続き的生成</h1>
+<div class="chap-lead">山や岩、雲のような自然物は「規則的でもなく、完全にランダムでもない」形をしています。この章では、そのような形をプログラムで作るための基本部品、パーリンノイズとその重ね合わせ（fBm）を、数式と実装の両面から学びます。</div>
+
+<h2>5.1 乱数ではダメな理由</h2>
+<p>地形の高さを各点で乱数にすると、隣り合う点の高さが無関係になり、砂嵐のような画像になります。自然な起伏に必要なのは「近くの点は似た値、遠くの点は無関係」という<b>連続性のあるランダム</b>です。これを作るのが<b>ノイズ関数</b>で、CG では Ken Perlin が 1985 年に考案し 2002 年に改良した<b>パーリンノイズ</b>が標準的に使われます。</p>
+
+<h2>5.2 パーリンノイズの仕組み</h2>
+<div class="fig">
+<svg width="420" height="230" viewBox="0 0 420 230" font-family="sans-serif" font-size="11">
+  <g transform="translate(40,20)">
+    <g stroke="#bbb"><line x1="0" y1="0" x2="180" y2="0"/><line x1="0" y1="90" x2="180" y2="90"/><line x1="0" y1="180" x2="180" y2="180"/><line x1="0" y1="0" x2="0" y2="180"/><line x1="90" y1="0" x2="90" y2="180"/><line x1="180" y1="0" x2="180" y2="180"/></g>
+    <g stroke="#2b5797" stroke-width="2" marker-end="url(#ar)">
+      <line x1="0" y1="90" x2="25" y2="70"/><line x1="90" y1="90" x2="70" y2="65"/><line x1="0" y1="180" x2="28" y2="185"/><line x1="90" y1="180" x2="105" y2="155"/>
+    </g>
+    <g fill="#2b5797"><circle cx="0" cy="90" r="3"/><circle cx="90" cy="90" r="3"/><circle cx="0" cy="180" r="3"/><circle cx="90" cy="180" r="3"/></g>
+    <circle cx="60" cy="150" r="4" fill="#c33"/><text x="66" y="146" fill="#c33">P</text>
+    <g stroke="#c33" stroke-dasharray="3,2"><line x1="0" y1="90" x2="60" y2="150"/><line x1="90" y1="90" x2="60" y2="150"/><line x1="0" y1="180" x2="60" y2="150"/><line x1="90" y1="180" x2="60" y2="150"/></g>
+    <text x="-30" y="94" font-size="10">格子点</text>
+  </g>
+  <g transform="translate(250,30)" font-size="10.5">
+    <text x="0" y="0" font-weight="bold">1 点 P の値の求め方</text>
+    <text x="0" y="22">① P を囲む 4 格子点を求める</text>
+    <text x="0" y="40">② 各格子点に固定の勾配ベクトル</text>
+    <text x="0" y="55">　(青矢印) をハッシュで割り当てる</text>
+    <text x="0" y="77">③ 格子点→P のベクトル (赤点線) と</text>
+    <text x="0" y="92">　勾配の内積を 4 つ計算</text>
+    <text x="0" y="114">④ 4 つの値を Fade 曲線で</text>
+    <text x="0" y="129">　双線形補間</text>
+    <text x="0" y="155" fill="#555">格子点上では内積が 0 なので値は 0、</text>
+    <text x="0" y="170" fill="#555">格子の間で山や谷ができる</text>
+  </g>
+</svg>
+<div class="cap">図 5-1 2 次元パーリンノイズ</div>
+</div>
+<p>格子点ごとの勾配ベクトルは、座標から<b>置換テーブル</b>（0〜255 をシャッフルした配列）を引いて決めます。同じ座標には常に同じ勾配が対応するので、乱数と違って何度評価しても同じ値になります（再現性）。</p>
+<h3>Fade 曲線</h3>
+<p>4 つの内積を単純な線形補間でつなぐと、格子の境界で折れ目が見えます。Perlin の改良版では、両端で 1 階・2 階微分が 0 になる 5 次曲線で補間係数を緩和します。</p>
+<div class="formula">
+  fade(<i>t</i>) = 6<i>t</i><sup>5</sup> − 15<i>t</i><sup>4</sup> + 10<i>t</i><sup>3</sup>
+</div>
+{{SVG_FADE}}
+{{CODE:src/Noise.cpp:float Perlin2D(float x, float y):    }}}
+
+<h2>5.3 fBm — 大小の起伏を重ねる</h2>
+<p>パーリンノイズ 1 層は「なめらかな丘」程度の起伏しか作れません。周波数を 2 倍、振幅を 1/2 にしたノイズを何層も足すと、大きなうねりの上に細かい凹凸が乗った、自然な地形や雲の形になります。これを fBm（fractional Brownian motion）と呼び、各層を<b>オクターブ</b>と呼びます。</p>
+<div class="formula">
+  fBm(<i>x</i>) = Σ<sub><i>i</i>=0</sub><sup><i>n</i>−1</sup> <i>g</i><sup><i>i</i></sup> · noise(<i>l</i><sup><i>i</i></sup> <i>x</i>) / Σ <i>g</i><sup><i>i</i></sup>&nbsp;&nbsp;（<i>l</i> = lacunarity ≈ 2, <i>g</i> = gain ≈ 0.5）
+</div>
+{{SVG_FBM}}
+{{CODE:src/Noise.cpp:float Fbm2D(float x, float y, int octaves, float lacunarity, float gain):    }}}
+
+<h2>5.4 尾根状ノイズ</h2>
+<p>ノイズの絶対値を取って 1 から引く（1 − |noise|）と、ノイズが 0 を横切る場所に鋭い「尾根」が現れます。これを重ねた<b>尾根状ノイズ</b>（ridged multifractal）は、山の稜線や岩の亀裂の表現に向いています。本プログラムでは 2 乗して尾根をさらに細くしています。</p>
+{{CODE:src/Noise.cpp:float Ridged2D(float x, float y, int octaves):    }}}
+
+<h2>5.5 周期化 — 継ぎ目のないテクスチャ</h2>
+<p>テクスチャは WRAP で敷き詰めるので、右端と左端、上端と下端がつながっていないと継ぎ目が見えます。ノイズの格子座標を周期 <i>P</i> で折り返せば（<i>X</i> mod <i>P</i>）、格子点 <i>P</i> と 0 が同じ勾配を持ち、値が連続します。</p>
+{{CODE:src/Noise.cpp:float Perlin2DPeriodic(float x, float y, int period):    }}}
+<div class="point"><b>ポイント</b> 「乱数の代わりにハッシュを使う」のがノイズの本質です。座標から決定的に値が決まるので、GPU で並列に評価しても、後から同じ場所を評価しても、常に同じ結果が得られます。</div>
+
+<div class="exercise"><b>演習 5</b>
+<ol>
+  <li><code>Fbm2D</code> のオクターブ数を 1, 3, 6 と変えて地形を生成し、見た目の違いを比べてください。</li>
+  <li>gain を 0.7 にすると細かい凹凸が強調されます。逆に 0.3 ではどうなるか予想してから試してください。</li>
+  <li>Fade 曲線を <code>return t;</code>（線形）に変えて、格子の折れ目が見えるか確認しましょう。</li>
+</ol></div>
+
+<!-- =============================== 第 6 章 =============================== -->
+<div class="chap-label">第 6 章</div>
+<h1>高さマップ地形の設計と生成</h1>
+<div class="chap-lead">地形をどう表現し、どう「蛇行する谷のある山」にデザインし、どうやって GPU が描ける三角形の集まりにするか。この章では高さマップという表現と、そこからメッシュ・法線・テクスチャ座標を作る手順を学びます。作った高さマップは、第 12 章で粒子の衝突判定にも使います。</div>
+
+<h2>6.1 高さマップという表現</h2>
+<p>地形のように「どの (<i>x</i>, <i>z</i>) にも高さが 1 つ決まる」形は、2 次元配列 <i>h</i>[<i>ix</i>][<i>iz</i>] で表せます。これが<b>高さマップ</b>です。メモリが少なく、任意の点の高さを補間で即座に取れ、法線も簡単に求まります。欠点は、ひさし状の張り出し（オーバーハング）や洞窟を表せないことです。</p>
+<p>本プログラムでは 257×257 の格子で 60 m × 60 m を覆います（1 セル ≈ 0.23 m）。格子点 (<i>ix</i>, <i>iz</i>) のワールド座標は <i>x</i> = −30 + <i>ix</i> · 0.234 のように線形に対応します。</p>
+
+<h2>6.2 谷のある山をデザインする</h2>
+<p>「蛇行する谷を水が流れ落ちる」ために、高さ関数を部品に分けて設計します。</p>
+{{SVG_VALLEY_PROFILE}}
+<table>
+  <tr><th style="width:24%">部品</th><th style="width:36%">式</th><th>役割</th></tr>
+  <tr><td>谷の中心線</td><td><i>c</i>(<i>z</i>) = 4 sin(0.16<i>z</i>) + 2 sin(0.41<i>z</i> + 1.7)</td><td>周期の違う 2 つの正弦波で自然な蛇行</td></tr>
+  <tr><td>壁の立ち上がり</td><td><i>w</i> = smoothstep(1.6, 8.5, |<i>x</i> − <i>c</i>|)</td><td>谷底 (0) から山 (1) へ滑らかに遷移</td></tr>
+  <tr><td>傾斜</td><td>−0.20 <i>z</i></td><td>上流 (−z) が高く、水が流れる</td></tr>
+  <tr><td>谷底の断面</td><td>0.3 · min(<i>d</i>, 1.6)<sup>2</sup></td><td>浅い U 字で水を中央に集める</td></tr>
+  <tr><td>山</td><td>11 <i>w</i></td><td>両側に高さ 11 m の山</td></tr>
+  <tr><td>凹凸</td><td>fBm · (0.25 + 5<i>w</i>)</td><td>谷底は小さく、山肌は大きく</td></tr>
+  <tr><td>稜線</td><td>ridged · 1.5 <i>w</i></td><td>岩の筋</td></tr>
+</table>
+{{CODE:src/Terrain.cpp:float Terrain::HeightFunction(float x, float z):}}
+<div class="column"><b>コラム: smoothstep</b> smoothstep(<i>a</i>, <i>b</i>, <i>x</i>) は <i>x</i> ≤ <i>a</i> で 0、<i>x</i> ≥ <i>b</i> で 1、間を 3<i>t</i><sup>2</sup> − 2<i>t</i><sup>3</sup> でつなぐ関数です。「ここからここまでで 0 から 1 に変わる」を折れ目なく表せるため、CG では閾値処理・マスク・遷移のあらゆる場面に登場します。HLSL には組み込み関数があります。</div>
+
+<h2>6.3 高さの補間と法線</h2>
+<p>粒子の衝突判定では、格子点の間の任意の位置の高さが必要です。周囲 4 点を<b>双線形補間</b>します。</p>
+{{CODE:src/Terrain.cpp:float Terrain::GetHeight(float x, float z) const:}}
+<p>法線は、高さ関数 <i>y</i> = <i>h</i>(<i>x</i>, <i>z</i>) の偏微分から求まります。曲面 <i>h</i>(<i>x</i>, <i>z</i>) − <i>y</i> = 0 の勾配 (∂<i>h</i>/∂<i>x</i>, −1, ∂<i>h</i>/∂<i>z</i>) は面に垂直なので、上向きに符号を直して正規化します。偏微分は<b>中心差分</b>（両隣の差 ÷ 距離）で近似します。</p>
+<div class="formula">
+  <b>N</b> = normalize(−∂<i>h</i>/∂<i>x</i>, 1, −∂<i>h</i>/∂<i>z</i>),&nbsp;&nbsp; ∂<i>h</i>/∂<i>x</i> ≈ (<i>h</i>(<i>x</i>+<i>e</i>, <i>z</i>) − <i>h</i>(<i>x</i>−<i>e</i>, <i>z</i>)) / 2<i>e</i>
+</div>
+{{CODE:src/Terrain.cpp:XMFLOAT3 Terrain::GetNormal(float x, float z) const:}}
+
+<h2>6.4 メッシュの生成</h2>
+<p>GPU は三角形しか描けないので、格子を三角形に分割します。各セルを対角線で 2 枚に分け、頂点は格子点をそのまま使い、<b>インデックスバッファ</b>で三角形の頂点番号を並べます（頂点を共有するのでメモリが約 1/6 で済みます）。</p>
+<div class="fig">
+<svg width="360" height="150" viewBox="0 0 360 150" font-family="sans-serif" font-size="11">
+  <g transform="translate(30,20)">
+    <rect x="0" y="0" width="100" height="100" fill="#f4f6f9" stroke="#2b5797"/>
+    <line x1="0" y1="0" x2="100" y2="100" stroke="#2b5797"/>
+    <text x="-8" y="-6">i00 (x0,z0)</text><text x="96" y="-6">i10 (x1,z0)</text><text x="-8" y="118">i01 (x0,z1)</text><text x="96" y="118">i11 (x1,z1)</text>
+    <text x="60" y="35" fill="#c33" font-size="10">三角形 1</text><text x="12" y="80" fill="#c33" font-size="10">三角形 2</text>
+  </g>
+  <g transform="translate(190,30)" font-size="10.5">
+    <text x="0" y="0">三角形 1: i00 → i11 → i10</text>
+    <text x="0" y="20">三角形 2: i00 → i01 → i11</text>
+    <text x="0" y="48" fill="#555">上から見て時計回り = 表面</text>
+    <text x="0" y="64" fill="#555">(D3D の既定。裏返すと消える)</text>
+    <text x="0" y="90">256 × 256 セル × 2 = 131,072 三角形</text>
+    <text x="0" y="108">インデックスは 32 bit (65,535 頂点超)</text>
+  </g>
+</svg>
+<div class="cap">図 6-2 セルの三角形分割と巻き順</div>
+</div>
+{{CODE:src/Terrain.cpp:bool Terrain::BuildMesh(Graphics& gfx):}}
+<p>テクスチャ座標はワールド座標に比例させ（<i>x</i>, <i>z</i>) × 0.12 としています。約 8.3 m ごとに画像が 1 周し、WRAP で敷き詰められます。</p>
+<div class="note"><b>巻き順を間違えると</b> 三角形が全部裏面と判定されて消えます。「何も描かれない」ときは、まずカリングを無効にして描かれるか確かめるのが定石です。</div>
+
+<div class="exercise"><b>演習 6</b>
+<ol>
+  <li>谷の中心線 <code>ValleyCenterX</code> の振幅を 8 にして、蛇行を強くしてみましょう。水が壁に当たって溜まる場所ができますか。</li>
+  <li>傾斜 −0.20 を −0.05 にすると水はどうなりますか。流速と滞留の関係を観察してください。</li>
+  <li><code>GRID_N</code> を 129 に下げると、地形の見た目と衝突の滑らかさはどう変わりますか（頂点数と FPS も比べてください）。</li>
+</ol></div>
+
+<!-- =============================== 第 7 章 =============================== -->
+<div class="chap-label">第 7 章</div>
+<h1>テクスチャの生成と画像ファイルの読み込み</h1>
+<div class="chap-lead">岩肌の模様は、画像ファイルを読み込む方法と、ノイズから計算で作る方法の 2 通りを実装しています。この章では、CPU 上のピクセル配列を GPU テクスチャにする共通の手順、WIC による画像読み込み、そしてノイズによる手続き的テクスチャを学びます。</div>
+
+<h2>7.1 ピクセル配列から GPU テクスチャへ</h2>
+<p>どちらの方法でも最終的には「RGBA 各 8bit のピクセルが幅 × 高さ個並んだ配列」ができ、それをテクスチャにします。ミップマップも同時に作ります。</p>
+{{CODE:src/TextureLoader.cpp:    bool CreateFromPixels(Graphics& gfx, const void* pixels, UINT width, UINT height,:    }}}
+<ul>
+  <li><code>MipLevels = 0</code> で「1×1 までの全レベルを確保」、<code>GENERATE_MIPS</code> フラグと <code>RENDER_TARGET</code> バインドで GPU にミップ生成を任せられます。</li>
+  <li><code>UpdateSubresource</code> はレベル 0 だけに書き、<code>GenerateMips</code> が残りを縮小して埋めます。</li>
+</ul>
+
+<h2>7.2 WIC による画像ファイルの読み込み</h2>
+<p>Windows には画像コーデック基盤 WIC（Windows Imaging Component）が標準搭載されており、PNG / JPEG / BMP / TIFF / GIF などを追加ライブラリなしで読めます。COM ベースの API なので手順はやや長いですが、流れは単純です。</p>
+<ol>
+  <li>ファクトリ <code>IWICImagingFactory</code> を作る（COM 初期化が必要）</li>
+  <li><code>CreateDecoderFromFilename</code> でファイルを開く。形式は拡張子でなく内容で判定される</li>
+  <li>先頭フレームを取り出す（アニメ GIF などは複数フレーム）</li>
+  <li><code>IWICFormatConverter</code> で 32bpp RGBA に統一（元がパレット・グレー・CMYK でも吸収）</li>
+  <li><code>CopyPixels</code> でメモリに展開し、7.1 の手順でテクスチャ化</li>
+</ol>
+{{CODE:src/TextureLoader.cpp:    bool LoadFromFile(Graphics& gfx, const std::wstring& path,:    }}}
+<p><code>Terrain::CreateRockTexture</code> は <code>assets/rock.png → rock.jpg → …</code> の順に読み込みを試し、すべて失敗すれば手続き生成に切り替えます。「無ければ落ちる」ではなく「無ければ代替」という設計は、配布時のトラブルを減らします。</p>
+
+<h2>7.3 ノイズによる岩テクスチャ</h2>
+<p>画像がないときは、第 5 章の周期ノイズでピクセルごとに色を決めます。複数の成分を「色の混合」「暗くする」「ざらつかせる」という操作で合成します。</p>
+<table>
+  <tr><th style="width:20%">成分</th><th style="width:34%">ノイズ</th><th>合成の仕方</th></tr>
+  <tr><td>まだら</td><td>fBm（周期 4、6 層）</td><td>暗い茶と明るい肌色を lerp</td></tr>
+  <tr><td>赤斑</td><td>fBm（周期 9、別位相）</td><td>閾値以上のところに赤を混ぜる</td></tr>
+  <tr><td>亀裂</td><td>尾根ノイズ（周期 10）を smoothstep(0.76, 0.93)</td><td>細い線状に暗くする</td></tr>
+  <tr><td>大きな明暗</td><td>fBm（周期 2、3 層）</td><td>全体の明るさをゆっくり変える</td></tr>
+  <tr><td>ざらつき</td><td>fBm（周期 64）</td><td>±7% の細かい明暗</td></tr>
+</table>
+{{CODE:src/Terrain.cpp:bool Terrain::CreateProceduralRockTexture(Graphics& gfx):}}
+<div class="point"><b>ポイント</b> 手続き的テクスチャは「解像度に依存しない」「パラメータで無限に変えられる」「ファイル不要」という利点があります。一方、写真のような複雑さを出すには多くの層と調整が必要で、実務では写真テクスチャと組み合わせて使うのが普通です。</div>
+
+<div class="exercise"><b>演習 7</b>
+<ol>
+  <li><code>assets/rock.png</code> を好きな写真（シームレスでなくてもよい）に差し替えて、継ぎ目がどう見えるか観察してください。</li>
+  <li>手続き生成の亀裂の閾値 0.76 を 0.6 にすると、亀裂はどう変わりますか。</li>
+  <li><code>GenerateMips</code> の呼び出しをコメントアウトし、遠景でのちらつきを確認してください（サンプラーの <code>MaxLOD</code> も 0 にする必要があるか考えてみましょう）。</li>
+</ol></div>
+
+<!-- =============================== 第 8 章 =============================== -->
+<div class="chap-label">第 8 章</div>
+<h1>外部メッシュの取り込み — OBJ と Blender</h1>
+<div class="chap-lead">自分で式を書く代わりに、Blender などのツールで作った地形を使いたいこともあります。この章では、最も単純な 3D ファイル形式である Wavefront OBJ の読み方、座標系の変換、そして「メッシュを高さマップに焼き込む」ことで衝突判定を変えずに任意形状を扱う方法を学びます。</div>
+
+<h2>8.1 OBJ 形式</h2>
+<p>OBJ は行ごとに要素を書くテキスト形式です。</p>
+<pre>v  -30.0  6.19  30.0      # 頂点座標 (1 番から数える)
+vt 0.0 0.0                # テクスチャ座標
+vn 0.0 1.0 0.0            # 法線
+f  1/1/1 2/2/2 123/123/123 122/122/122   # 面: 頂点/UV/法線 の番号の組 (4 頂点以上も可)</pre>
+<p>面の各頂点は <code>a</code>, <code>a/b</code>, <code>a//c</code>, <code>a/b/c</code> の 4 通りの書き方があり、負の数は「末尾から数えて」の相対指定です。Blender は既定で四角形（quad）を出力するので、三角形化が必要です。</p>
+<h3>頂点の共有</h3>
+<p>OBJ では位置・UV・法線が別々の配列で、面の頂点は「その組み合わせ」を指します。GPU の頂点は 1 つの構造体なので、(v, vt, vn) の組ごとに頂点を作り、同じ組が再登場したら再利用します。ハッシュマップで管理します。</p>
+{{CODE:src/MeshLoader.cpp:    bool LoadObj(const std::wstring& path, MeshData& out, std::string* errorMsg):    }}}
+<p>多角形の三角形化は<b>扇状分割</b>（0, <i>i</i>, <i>i</i>+1）です。凸な多角形なら常に正しく、Blender の quad はほぼ凸なので実用上十分です。</p>
+
+<h2>8.2 座標系の変換</h2>
+<p>Blender は右手系・Z 上、本プログラムは左手系・Y 上です。変換は 2 段階で行います。</p>
+<div class="formula">
+  Blender (<i>x</i>, <i>y</i>, <i>z</i>) —エクスポート (Forward −Z, Up Y)→ OBJ (<i>x</i>, <i>z</i>, −<i>y</i>) —読み込み時 x 反転→ DirectX (−<i>x</i>, <i>z</i>, −<i>y</i>)
+</div>
+<p>1 段目は Blender のエクスポート設定で、Y を上にする軸の入れ替えです。これで右手系 Y-up になります。2 段目で <i>x</i> を反転すると左手系になります（鏡映は右手系と左手系を入れ替えます）。結果として、Blender の上面図で上 (+Y) が奥（上流）、右 (+X) が画面の右になり、Blender で見たままの構図で表示されます。</p>
+<h3>巻き順の統一</h3>
+<p>鏡映すると三角形の巻き順が反転します。さらに元データの巻き順は保証されません。そこで三角形ごとに <b>e</b><sub>1</sub> × <b>e</b><sub>2</sub> の <i>y</i> 成分を調べ、負（下向き）なら頂点 1, 2 を入れ替えます。地形は「上から見える面が表」なので、これで第 6 章のメッシュと同じ規約に揃います。</p>
+{{CODE:src/Terrain.cpp:bool Terrain::LoadMeshTerrain(Graphics& gfx):}}
+
+<h2>8.3 自動フィット</h2>
+<p>SPH のパラメータ（粒子間隔 0.3 m、地形 60 m）に合わせるため、バウンディングボックスから一様スケールを決め、中心を原点に移します。高さも同じ倍率なので、Blender 側では縦横の比だけ意識すれば十分です。</p>
+
+<h2>8.4 高さマップへの焼き込み</h2>
+<p>衝突判定は高さマップで行うので、メッシュを真上から「ラスタライズ」して格子点の高さを求めます。手順は GPU のラスタライザと同じ考え方です。</p>
+<ol>
+  <li>三角形を <i>xz</i> 平面に投影し、包含する格子範囲を求める</li>
+  <li>範囲内の各格子点で<b>重心座標</b>（辺関数 ÷ 面積）を計算し、3 つとも ≥ 0 なら内側</li>
+  <li>高さを重心座標で補間し、既存値より高ければ採用（上から見える面）</li>
+  <li>覆われなかった格子点は、隣接点の平均で反復的に穴埋め</li>
+</ol>
+<div class="formula">
+  <i>w</i><sub>0</sub> = ((<i>x</i><sub>1</sub>−<i>p</i><sub>x</sub>)(<i>z</i><sub>2</sub>−<i>p</i><sub>z</sub>) − (<i>x</i><sub>2</sub>−<i>p</i><sub>x</sub>)(<i>z</i><sub>1</sub>−<i>p</i><sub>z</sub>)) / area,&nbsp; <i>w</i><sub>1</sub> = …,&nbsp; <i>w</i><sub>2</sub> = 1 − <i>w</i><sub>0</sub> − <i>w</i><sub>1</sub><br>
+  <i>y</i> = <i>w</i><sub>0</sub><i>y</i><sub>0</sub> + <i>w</i><sub>1</sub><i>y</i><sub>1</sub> + <i>w</i><sub>2</sub><i>y</i><sub>2</sub>
+</div>
+{{CODE:src/Terrain.cpp:void Terrain::BakeHeightMap(const MeshLoader::MeshData& mesh):}}
+<div class="column"><b>コラム: 重心座標</b> 三角形の内部の点 P は、3 頂点の「重み付き平均」 P = <i>w</i><sub>0</sub>A + <i>w</i><sub>1</sub>B + <i>w</i><sub>2</sub>C（<i>w</i> の和は 1）で一意に表せます。重みは「P と対辺が作る小三角形の面積 ÷ 全体の面積」に等しく、すべて 0 以上なら P は内側です。GPU が三角形内で頂点属性を補間するときも、まさにこの重心座標を使っています。</div>
+
+<h2>8.5 エミッタ位置の決定</h2>
+<p>手続き生成では谷の中心線を式で持っていましたが、任意メッシュでは使えません。そこで「上流端の行で最も低い <i>x</i>」を高さマップから探す <code>GetValleyCenterX</code> を用意し、水の投入位置に使います。</p>
+{{CODE:src/Terrain.cpp:float Terrain::GetValleyCenterX(float z) const:}}
+<div class="two">
+  <div class="fig"><img src="{{IMG_OBJ1}}"><div class="cap">図 8-1 OBJ から取り込んだ試作用の谷（2 段の滝つき）</div></div>
+  <div class="fig"><img src="{{IMG_OBJ2}}"><div class="cap">図 8-2 同じ地形の表面生成モード</div></div>
+</div>
+
+<div class="exercise"><b>演習 8</b>
+<ol>
+  <li>Blender で平面を細分化し、Proportional Edit で谷を掘って <code>assets/terrain.obj</code> に書き出し、水を流してみましょう。</li>
+  <li>読み込み時の <i>x</i> 反転をやめると、Blender の上面図と比べて左右がどうなるか確認してください。</li>
+  <li>格子の穴埋めを無効化（未設定を 0 のまま）して、メッシュが正方形でないときに何が起きるか観察してください。</li>
+</ol></div>

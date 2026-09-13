@@ -90,6 +90,8 @@ tools/
 
 - [API 仕様書](docs/API.md) — 各クラス・関数のシグネチャ、引数、戻り値、パラメータ一覧
 - [フロー図](docs/FLOW.md) — 起動〜フレーム処理〜SPH〜描画パスの流れ（Mermaid）
+- [技術解説書 (PDF)](docs/技術解説書.pdf) — 実装の技術要素のまとめ
+- [CG 解説書 (PDF)](docs/CG解説書.pdf) — このプログラムを教材にした CG・流体シミュレーションの教科書（全 18 章 + 付録）。`docs/book/*.html` から `tools/build_book.py` で生成
 
 ## アルゴリズムの概要
 
