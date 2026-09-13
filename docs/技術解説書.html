@@ -48,7 +48,7 @@
   <div class="meta">
     プロジェクト: water_from_mountain<br>
     リポジトリ: https://github.com/githubtarohario/water_from_mountain<br>
-    対象バージョン: コミット bba4428（2026-09-13）<br>
+    対象バージョン: コミット 28a8593（2026-09-13）<br>
     参考: 図6.37 表面生成.mp4
   </div>
 </div>
@@ -61,6 +61,7 @@
   <li>開発環境とビルド</li>
   <li>地形生成（手続き的高さマップ）</li>
   <li>岩テクスチャ（WIC 読み込みと手続き生成）</li>
+  <li>OBJ 地形の取り込み（Blender 連携）</li>
   <li>SPH 流体シミュレーション</li>
   <li>近傍探索（空間ハッシュ + カウンティングソート）</li>
   <li>境界処理と安定化</li>
@@ -86,7 +87,7 @@
   <tr><td>外部ライブラリ</td><td>なし（Windows SDK のみ）</td></tr>
   <tr><td>物理モデル</td><td>WCSPH（弱圧縮性 SPH、Müller et al. 2003）、CPU 並列（OpenMP）</td></tr>
   <tr><td>表面生成</td><td>スクリーンスペース流体レンダリング（van der Laan et al. 2009 の簡略版）</td></tr>
-  <tr><td>規模</td><td>粒子 12,000 個、地形 257×257 頂点、ソース約 3,900 行</td></tr>
+  <tr><td>規模</td><td>粒子 12,000 個、地形 257×257 頂点（OBJ 取り込み可）、ソース約 4,300 行</td></tr>
   <tr><td>性能</td><td>粒子モード 60〜120 fps、表面モード 55〜80 fps（8 コア CPU + ミドルレンジ GPU）</td></tr>
 </table>
 
@@ -118,8 +119,9 @@
   <tr><td>FrameConstants</td><td>FrameConstants.h</td><td>全シェーダー共通の定数バッファ構造体（b0）</td></tr>
   <tr><td>Camera</td><td>Camera.h/.cpp</td><td>オービットカメラ（ビュー / 射影行列）</td></tr>
   <tr><td>Noise</td><td>Noise.h/.cpp</td><td>パーリンノイズ、fBm、尾根状ノイズ（周期版を含む）</td></tr>
-  <tr><td>Terrain</td><td>Terrain.h/.cpp</td><td>高さマップ生成、メッシュ、岩テクスチャ、衝突用の高さ / 法線問い合わせ</td></tr>
+  <tr><td>Terrain</td><td>Terrain.h/.cpp</td><td>OBJ 読み込み or 高さマップ生成、メッシュ、岩テクスチャ、衝突用の高さ / 法線問い合わせ</td></tr>
   <tr><td>TextureLoader</td><td>TextureLoader.h/.cpp</td><td>WIC による画像読み込み、ミップマップ付きテクスチャ作成</td></tr>
+  <tr><td>MeshLoader</td><td>MeshLoader.h/.cpp</td><td>Wavefront OBJ の読み込み（多角形の三角形化、法線計算）</td></tr>
   <tr><td>SPH</td><td>SPH.h/.cpp</td><td>流体シミュレーション本体（近傍探索、密度・圧力・力、積分、境界、エミッタ）</td></tr>
   <tr><td>FluidRenderer</td><td>FluidRenderer.h/.cpp</td><td>粒子の球描画、スクリーンスペース流体（深度 → ぼかし → 合成）</td></tr>
   <tr><td>シェーダー</td><td>shaders/*.hlsl(i)</td><td>Terrain / Particle / FluidSurface / Common</td></tr>
@@ -128,7 +130,9 @@
 <h2>2.2 データフロー</h2>
 <pre>
 [起動時]
-  Noise ──→ Terrain::BuildHeightMap ──→ 高さマップ (CPU, float 257x257)
+  assets/terrain.obj ──→ MeshLoader ──→ 座標変換/自動フィット ──→ 頂点/インデックスバッファ (GPU)
+       │                                      └──→ BakeHeightMap ──→ 高さマップ (CPU, float 257x257)
+       └(無ければ) Noise ──→ Terrain::BuildHeightMap ──→ 高さマップ
                                    └──→ BuildMesh ──→ 頂点/インデックスバッファ (GPU, IMMUTABLE)
   assets/rock.png ──WIC──→ TextureLoader ──→ 岩テクスチャ (GPU, R8G8B8A8 + mips)
        └(無ければ) Noise ──→ CreateProceduralRockTexture ──┘
@@ -166,6 +170,7 @@
 
 <!-- ===================== 4 ===================== -->
 <h1>4. 地形生成（手続き的高さマップ）</h1>
+<p class="note">地形は <code>assets/terrain.obj</code> があればそれを読み込み（6 章）、なければ本章の手続き生成を用いる。どちらの場合も最終的に「高さマップ + 描画メッシュ」という同じ形になる。</p>
 <h2>4.1 高さ関数</h2>
 <p>地形は <i>y</i> = <i>h</i>(<i>x</i>, <i>z</i>) の高さマップで表す。谷の中心線を正弦波の和で蛇行させ、中心からの距離に応じて山を立ち上げる。上流（−z）を高く、下流（+z）を低くして水が流れる勾配を作る。</p>
 <div class="formula">
@@ -231,9 +236,94 @@
   <li>陰影: ランバート拡散反射 max(0, <i>N</i>·<i>L</i>) + 半球環境光（上向きほど明るい）+ 谷底の暗色化。光源方向は (−0.35, 0.85, 0.45) を正規化。</li>
 </ul>
 
+
 <!-- ===================== 6 ===================== -->
-<h1>6. SPH 流体シミュレーション</h1>
-<h2>6.1 SPH の基本式</h2>
+<h1>6. OBJ 地形の取り込み（Blender 連携）</h1>
+<h2>6.1 目的と方式</h2>
+<p>手続き生成の地形に加え、Blender などの DCC ツールで作ったメッシュを地形として使えるようにした。方式は「<b>メッシュはそのまま描画し、衝突判定用には真上から高さマップに焼き込む</b>」というハイブリッドである。SPH 側は既存の <code>GetHeight / GetNormal</code> をそのまま使うため、物理コードの変更なしに任意形状の地形を扱える。</p>
+<div class="two">
+  <div class="fig"><img src="{{IMG_OBJ1}}"><div class="cap">図 6-1 OBJ 地形（試作用の谷、2 段の滝つき）— 粒子モード</div></div>
+  <div class="fig"><img src="{{IMG_OBJ2}}"><div class="cap">図 6-2 同 — 表面生成モード</div></div>
+</div>
+
+<h2>6.2 OBJ ローダー（MeshLoader）</h2>
+<p>Wavefront OBJ は行指向のテキスト形式で、外部ライブラリなしで読める。対応要素と処理は次のとおり。</p>
+<table>
+  <tr><th>行</th><th>内容</th><th>処理</th></tr>
+  <tr><td><code>v x y z</code></td><td>頂点座標</td><td>一時配列に蓄積</td></tr>
+  <tr><td><code>vt u v</code></td><td>テクスチャ座標</td><td><i>v</i> ← 1 − <i>v</i>（OBJ は左下原点、D3D は左上原点）</td></tr>
+  <tr><td><code>vn x y z</code></td><td>法線</td><td>蓄積。無ければ後で面積重み付きスムーズ法線を計算</td></tr>
+  <tr><td><code>f a/b/c …</code></td><td>面</td><td><code>a</code> / <code>a/b</code> / <code>a//c</code> / <code>a/b/c</code> と負の相対インデックスに対応。(v, vt, vn) の組をキーに頂点を共有し、4 頂点以上は扇状 (0, i, i+1) に三角形化</td></tr>
+  <tr><td><code>o g s usemtl mtllib</code></td><td>その他</td><td>無視（材質は本プログラム側の岩テクスチャを使う）</td></tr>
+</table>
+<p>OBJ では「座標が同じでも UV や法線が異なれば別頂点」なので、(v, vt, vn) の三つ組をハッシュマップのキーにして頂点を生成・再利用する。試作用の谷（121×121 頂点、14,400 四角形）は約 2 MB で、読み込みは数十 ms。</p>
+
+<h2>6.3 座標系の変換</h2>
+<p>Blender は右手系・Z-up、DirectX は左手系・Y-up である。変換は 2 段階で行う。</p>
+<ol>
+  <li><b>エクスポート時</b>（Blender 側）: 「Forward: −Z, Up: Y」を指定すると Blender (<i>x</i>, <i>y</i>, <i>z</i>) → OBJ (<i>x</i>, <i>z</i>, −<i>y</i>) と軸が入れ替わり、右手系 Y-up になる。</li>
+  <li><b>読み込み時</b>（本プログラム）: 右手系 → 左手系にするため <i>x</i> を反転する（位置と法線）。</li>
+</ol>
+<div class="formula">
+  Blender (<i>x</i>, <i>y</i>, <i>z</i>) → OBJ (<i>x</i>, <i>z</i>, −<i>y</i>) → DirectX (−<i>x</i>, <i>z</i>, −<i>y</i>)
+</div>
+<p>結果として Blender の上面図で「上 (+Y)」が奥（上流、−z）、「右 (+X)」が画面右になり、Blender で見たままの構図でカメラに映る。</p>
+<p><b>巻き順の統一</b>: 鏡映変換で三角形の巻き順が反転し、さらに元データの巻き順は保証されない。そこで三角形ごとに cross(<b>e</b><sub>1</sub>, <b>e</b><sub>2</sub>).y を計算し、負（下向き）なら頂点 1, 2 を入れ替える。地形は「上から見える面が表」なので、4 章のメッシュと同じ規約（左手系 + 時計回りが表 ⇔ cross.y &gt; 0）に揃う。</p>
+
+<h2>6.4 自動フィット</h2>
+<p>SPH のパラメータ（粒子間隔 0.3 m、地形 60 m 四方）に合わせるため、読み込んだメッシュのバウンディングボックスから一様スケールを決める。</p>
+<div class="formula">
+  <i>s</i> = 0.999 · WORLD_SIZE / max(Δ<i>x</i>, Δ<i>z</i>),&nbsp;&nbsp; <b>p</b> ← (<b>p</b> − <b>center</b>) · <i>s</i>
+</div>
+<p>xz の大きい方の辺が 60 m になり、中心が原点に来る。高さも同じ倍率で拡縮されるので、Blender 側では縦横比だけ意識すればよい。0.999 は端の頂点が高さマップ格子の外に出ないための余裕である。</p>
+
+<h2>6.5 高さマップへの焼き込み（BakeHeightMap）</h2>
+<p>衝突判定は高さマップ（257×257）で行うため、メッシュを真上から「ラスタライズ」して各格子点の高さを求める。</p>
+<pre>
+heights[*] = 未設定
+for 各三角形 (p0, p1, p2):
+    xz 平面に投影し、包含する格子範囲 [ix0, ix1] × [iz0, iz1] を求める
+    for 範囲内の各格子点 (x, z):
+        辺関数で重心座標 (w0, w1, w2) を計算
+        if w0, w1, w2 ≥ −ε:                       # 三角形の内側 (辺上を含む)
+            y = w0·p0.y + w1·p1.y + w2·p2.y
+            heights[x, z] = max(heights[x, z], y)  # 上から見える面を採用
+for 未設定の格子点:  覆われた 4 近傍の平均で埋める (全て埋まるまで反復)
+</pre>
+<ul>
+  <li>重心座標は辺関数（2D の外積）を面積で割って求める。面積 ≈ 0 の縮退三角形（真横を向いた面）はスキップ。</li>
+  <li>max を取るため、オーバーハングがあっても上面のみが残る（下面は衝突に使われない）。</li>
+  <li>メッシュが正方形でない場合や穴がある場合、未被覆の格子点は隣接平均で外挿される（平坦に延長）。</li>
+  <li>計算量は O(三角形数 × 各三角形の包含格子点数)。14,400 四角形で数 ms。</li>
+</ul>
+
+<h2>6.6 エミッタ位置の決定</h2>
+<p>手続き生成では谷の中心線 <i>c</i>(<i>z</i>) を式で持っていたが、任意メッシュでは使えない。<code>Terrain::GetValleyCenterX(z)</code> を導入し、OBJ 地形では「その <i>z</i> の行で高さが最も低い <i>x</i>」を高さマップから線形探索する（端 1 m は除外）。エミッタは上流端 <i>z</i> = −27.5 でこの関数を呼ぶため、谷がどこにあっても水はその谷底に投入される。</p>
+
+<h2>6.7 Blender 側の手順と同梱スクリプト</h2>
+<table>
+  <tr><th>手順</th><th>内容</th></tr>
+  <tr><td>1. モデリング</td><td>上面図で上 (+Y) が上流＝奥、下 (−Y) が下流＝手前になるように谷を作る。1 単位 = 1 m にすると直感的だが、自動フィットされるので厳密でなくてよい</td></tr>
+  <tr><td>2. UV</td><td>任意。無ければワールド座標から (<i>x</i>, <i>z</i>) × 0.12 で自動生成</td></tr>
+  <tr><td>3. エクスポート</td><td>File → Export → Wavefront (.obj)。Forward: −Z, Up: Y。材質は不要</td></tr>
+  <tr><td>4. 配置</td><td><code>assets/terrain.obj</code> に保存して起動。タイトルバーに「地形: OBJ」</td></tr>
+</table>
+<ul>
+  <li><code>tools/blender_export_valley.py</code>: Blender 内で実行（または <code>blender -b -P</code>）すると、bmesh で 121×121 の格子を生成し高さ関数で変位、UV を設定して上記設定で OBJ を書き出す。Blender 2.8〜3.2（<code>export_scene.obj</code>）と 3.3 以降（<code>wm.obj_export</code>）の両 API に対応。</li>
+  <li><code>tools/make_test_valley.py</code>: Blender が無い環境向けに、同じ高さ関数・同じ軸変換で OBJ を書き出す。同梱の <code>assets/terrain.obj</code> はこれで生成した。</li>
+</ul>
+<p>試作用の谷は手続き生成版と区別できるよう、蛇行の周期を変え、途中に 2 段の落差（高さ 2 m の滝）を入れている。図 6-1 の上流側で水が青く溜まっているのは、この段差の上に淵ができているためである。</p>
+
+<h2>6.8 制約</h2>
+<ul>
+  <li>高さマップ方式のため、洞窟やひさし状のオーバーハングの下面には衝突しない。必要なら符号付き距離場（SDF）を構築し、SPH の衝突処理を「最近傍面への押し戻し」に置き換える（16 章）。</li>
+  <li>高さマップ解像度は 257×257（約 0.23 m 刻み）。これより細かい段差は平滑化される。</li>
+  <li>地形シェーダーの谷底暗色化（<i>y</i> + 0.2<i>z</i> による）は手続き生成の傾斜を前提にしており、OBJ 地形では見た目上の近似になる。</li>
+</ul>
+
+<!-- ===================== 7 ===================== -->
+<h1>7. SPH 流体シミュレーション</h1>
+<h2>7.1 SPH の基本式</h2>
 <p>SPH（Smoothed Particle Hydrodynamics）は流体を粒子で離散化し、任意の物理量 <i>A</i> を近傍粒子の値をカーネル <i>W</i> で重み付けした和で近似する。</p>
 <div class="formula">
   <i>A</i>(<i>x</i>) ≈ Σ<sub><i>j</i></sub> <i>m</i><sub><i>j</i></sub> (<i>A</i><sub><i>j</i></sub> / <i>ρ</i><sub><i>j</i></sub>) <i>W</i>(|<i>x</i> − <i>x</i><sub><i>j</i></sub>|, <i>h</i>)
@@ -248,7 +338,7 @@
 </div>
 <p>圧力を max(·, 0) で打ち切るのは、負圧（引力）による粒子の凝集を防ぐためである（自由表面付近では密度が <i>ρ</i><sub>0</sub> を下回るため）。</p>
 
-<h2>6.2 カーネル関数</h2>
+<h2>7.2 カーネル関数</h2>
 <div class="formula">
   <i>W</i><sub>poly6</sub>(<i>r</i>) = 315 / (64π<i>h</i><sup>9</sup>) · (<i>h</i><sup>2</sup> − <i>r</i><sup>2</sup>)<sup>3</sup> &nbsp;&nbsp;(0 ≤ <i>r</i> ≤ <i>h</i>)<br>
   ∇<i>W</i><sub>spiky</sub>(<i>r</i>) = −45 / (π<i>h</i><sup>6</sup>) · (<i>h</i> − <i>r</i>)<sup>2</sup> · <b>r̂</b> &nbsp;&nbsp;(0 &lt; <i>r</i> ≤ <i>h</i>)<br>
@@ -261,7 +351,7 @@
   <li>係数は <i>h</i> から起動時に事前計算する。</li>
 </ul>
 
-<h2>6.3 パラメータの設計</h2>
+<h2>7.3 パラメータの設計</h2>
 <table>
   <tr><th>量</th><th>値</th><th>根拠</th></tr>
   <tr><td>粒子間隔 <i>s</i></td><td>0.30 m</td><td>谷底幅 ≈ 3.2 m に約 10 個並ぶ粒度</td></tr>
@@ -272,26 +362,26 @@
   <tr><td>時間刻み Δ<i>t</i></td><td>0.003 s</td><td>CFL 条件 Δ<i>t</i> &lt; 0.4 <i>h</i> / (<i>c</i> + <i>v</i><sub>max</sub>) ≈ 0.0044 s を満たす</td></tr>
 </table>
 
-<h2>6.4 時間積分</h2>
+<h2>7.4 時間積分</h2>
 <p>シンプレクティック・オイラー法（速度を先に更新してから位置を更新）を用いる。エネルギーが長期的にドリフトしにくく、SPH の標準的な選択である。</p>
 <div class="formula">
   <b>v</b><sub><i>i</i></sub> ← <b>v</b><sub><i>i</i></sub> + <b>a</b><sub><i>i</i></sub> Δ<i>t</i>,&nbsp;&nbsp; <b>x</b><sub><i>i</i></sub> ← <b>x</b><sub><i>i</i></sub> + <b>v</b><sub><i>i</i></sub> Δ<i>t</i>
 </div>
 <p>1 フレームで <code>ceil(frameTime / Δt)</code> 回のサブステップを実行するが、上限 <code>maxSubsteps = 5</code> で頭打ちにする。処理落ち時にサブステップが増えてさらに遅くなる「死のスパイラル」を防ぎ、その場合は実時間より遅く進行する。</p>
 
-<h2>6.5 1 サブステップの処理順</h2>
+<h2>7.5 1 サブステップの処理順</h2>
 <pre>
 Emit(dt)                  エミッタ: spacing/emitSpeed 秒ごとに 14×4 の粒子板を上流に置く
-BuildGrid()               空間ハッシュ格子の構築（7 章）
+BuildGrid()               空間ハッシュ格子の構築（8 章）
 BuildNeighborLists()  ‖   近傍リスト作成（27 セル走査、最大 96 個）
 ComputeDensityPressure() ‖ 密度・圧力
 ComputeForces()       ‖   圧力力 + 粘性力 → 加速度クランプ → 重力
-Integrate()           ‖   速度・位置更新 → ResolveCollision（8 章）
+Integrate()           ‖   速度・位置更新 → ResolveCollision（9 章）
 RemoveDrained()           下流端を越えた粒子を末尾と入れ替えて削除
 </pre>
 <p>‖ は OpenMP <code>parallel for</code>（<code>schedule(dynamic, 64)</code>）で並列化した処理。粒子ごとに独立して書き込むため競合がない。</p>
 
-<h2>6.6 エミッタと排水</h2>
+<h2>7.6 エミッタと排水</h2>
 <ul>
   <li>上流端 <i>z</i> = −27.5 の谷の中心に、粒子板（横 14 × 縦 4）を初速 4 m/s（+z）で投入。板同士が重ならないよう「板が 1 粒子間隔進む時間 = <i>s</i> / <i>v</i><sub>emit</sub> = 0.075 s」ごとに投入する（約 750 粒子/秒）。</li>
   <li>格子配置の規則性を崩すため各粒子に ±15% のジッタ（xorshift 乱数）を加える。</li>
@@ -299,17 +389,17 @@ RemoveDrained()           下流端を越えた粒子を末尾と入れ替えて
 </ul>
 
 <!-- ===================== 7 ===================== -->
-<h1>7. 近傍探索（空間ハッシュ + カウンティングソート）</h1>
+<h1>8. 近傍探索（空間ハッシュ + カウンティングソート）</h1>
 <p>SPH の計算量は近傍探索に支配される。全粒子対を調べると O(<i>N</i><sup>2</sup>) = 1.4 億対 / ステップとなり実用にならないため、一辺 <i>h</i> の格子で空間を分割し、周囲 27 セルのみを調べる。</p>
 
-<h2>7.1 空間ハッシュ</h2>
+<h2>8.1 空間ハッシュ</h2>
 <div class="formula">
   セル座標: (<i>c</i><sub>x</sub>, <i>c</i><sub>y</sub>, <i>c</i><sub>z</sub>) = ⌊<b>x</b> / <i>h</i>⌋<br>
   ハッシュ: key = (<i>c</i><sub>x</sub> · 73856093) ⊕ (<i>c</i><sub>y</sub> · 19349663) ⊕ (<i>c</i><sub>z</sub> · 83492791) &amp; (tableSize − 1)
 </div>
 <p>Teschner et al.（2003）の大きな素数によるハッシュ。無限に広い空間を固定サイズ（粒子数の 2 倍以上の 2 のべき乗 = 32768）の表に写像するため、地形全体を格子で埋める必要がない。剰余の代わりにビットマスクを使う。</p>
 
-<h2>7.2 カウンティングソート</h2>
+<h2>8.2 カウンティングソート</h2>
 <pre>
 1. 各粒子のセル座標とハッシュ値を計算                       (並列)
 2. cellStart[key + 1]++  でハッシュ値ごとの粒子数を数える
@@ -318,7 +408,7 @@ RemoveDrained()           下流端を越えた粒子を末尾と入れ替えて
 </pre>
 <p>結果、ハッシュ値 key のセルに属する粒子は <code>sorted[cellStart[key] .. cellStart[key+1])</code> で連続して取り出せる。動的メモリ確保がなく、毎ステップ O(<i>N</i> + tableSize) で再構築できる。</p>
 
-<h2>7.3 近傍リストのキャッシュとハッシュ衝突対策</h2>
+<h2>8.3 近傍リストのキャッシュとハッシュ衝突対策</h2>
 <ul>
   <li>密度計算と力計算は同じ近傍を使うため、走査を 1 回にまとめて粒子ごとに最大 96 個の近傍番号を記録する（<code>BuildNeighborLists</code>）。走査コストが半減し、実測で約 3 倍の高速化。</li>
   <li>異なるセルが同じハッシュ値を持つと、27 セル走査で同じ粒子を 2 回数える危険がある。候補粒子のセル座標が「今調べているセル座標」と一致するかを確認して除外する。</li>
@@ -326,15 +416,15 @@ RemoveDrained()           下流端を越えた粒子を末尾と入れ替えて
 </ul>
 
 <!-- ===================== 8 ===================== -->
-<h1>8. 境界処理と安定化</h1>
-<h2>8.1 地形との衝突</h2>
+<h1>9. 境界処理と安定化</h1>
+<h2>9.1 地形との衝突</h2>
 <p>粒子中心が「地面の高さ + 粒子半径」より低ければ、その高さまで押し戻し、地面法線 <b>n</b> に対してめり込む速度成分を除去する。</p>
 <div class="formula">
   <i>y</i> ← <i>h</i>(<i>x</i>, <i>z</i>) + <i>s</i>/2,&nbsp;&nbsp; <b>v</b> ← <b>v</b> − (1 + <i>e</i>)(<b>v</b>·<b>n</b>)<b>n</b> &nbsp;(<b>v</b>·<b>n</b> &lt; 0 のとき),&nbsp;&nbsp; <b>v</b> ← (1 − <i>μ</i><sub>f</sub>)<b>v</b>
 </div>
 <p><i>e</i> = 0（反発なし）、<i>μ</i><sub>f</sub> = 0.01/ステップ。側壁（<i>x</i> = ±29.5）と上流壁（<i>z</i> = −29.5）も同様に処理する。</p>
 
-<h2>8.2 谷からの飛び出しを防ぐ 3 つの安定化</h2>
+<h2>9.2 谷からの飛び出しを防ぐ 3 つの安定化</h2>
 <p>初期実装では壁際で密度が急上昇したときの圧力の「蹴り」で粒子が谷の外へ飛散した。以下の 3 手法で解消した。</p>
 <table>
   <tr><th>手法</th><th>内容</th><th>パラメータ</th></tr>
@@ -344,12 +434,12 @@ RemoveDrained()           下流端を越えた粒子を末尾と入れ替えて
 </table>
 <p>このほか安全弁として速度上限 10 m/s、密度 0 除算防止（<i>r</i><sup>2</sup> &lt; 10<sup>−12</sup> の粒子対を除外）を設けている。</p>
 
-<h2>8.3 境界密度の欠損について</h2>
-<p>地面の下には粒子が存在しないため、接地粒子の密度は本来より低く見積もられる（境界密度欠損）。本実装は境界粒子を置かず、衝突処理と接触ゾーン減衰で吸収している。より厳密には Akinci らの境界粒子法や ghost particle が有効である（15 章）。</p>
+<h2>9.3 境界密度の欠損について</h2>
+<p>地面の下には粒子が存在しないため、接地粒子の密度は本来より低く見積もられる（境界密度欠損）。本実装は境界粒子を置かず、衝突処理と接触ゾーン減衰で吸収している。より厳密には Akinci らの境界粒子法や ghost particle が有効である（16 章）。</p>
 
 <!-- ===================== 9 ===================== -->
-<h1>9. 粒子のレンダリング（スフィア・インポスター）</h1>
-<h2>9.1 ビルボード生成</h2>
+<h1>10. 粒子のレンダリング（スフィア・インポスター）</h1>
+<h2>10.1 ビルボード生成</h2>
 <p>粒子ごとに 4 頂点の四角形を頂点バッファなしで生成する。<code>DrawInstanced(4, N)</code> を発行し、頂点シェーダーで <code>SV_InstanceID</code> から粒子を、<code>SV_VertexID</code> から四隅（−1,−1）(−1,1)(1,−1)(1,1) を選ぶ。四角形はビュー空間で作るため常にカメラに正対する。</p>
 <pre>
 float4 p = Particles[iid];                        // StructuredBuffer&lt;float4&gt; (xyz: 位置, w: 速さ)
@@ -358,7 +448,7 @@ float3 posV = centerV + float3(corners[vid] * radius, 0);
 o.posH = mul(float4(posV, 1), Proj);
 </pre>
 
-<h2>9.2 球面の再構成と正しい深度</h2>
+<h2>10.2 球面の再構成と正しい深度</h2>
 <p>ピクセルシェーダーで四角形内座標 uv（−1〜1）から球面上の点を求める。左手系ビュー空間ではカメラは +z を向くので、カメラ側の半球は <i>n</i><sub>z</sub> &lt; 0。</p>
 <div class="formula">
   <i>r</i><sup>2</sup> = <i>u</i><sup>2</sup> + <i>v</i><sup>2</sup> &gt; 1 → discard<br>
@@ -367,7 +457,7 @@ o.posH = mul(float4(posV, 1), Proj);
 </div>
 <p><code>SV_Depth</code> に球面の深度を書くことで、平面の四角形でありながら球同士・地形と正しく交差する。早期 Z は無効になるが、粒子数 12,000 程度では問題にならない。</p>
 
-<h2>9.3 速度による着色</h2>
+<h2>10.3 速度による着色</h2>
 <ul>
   <li>参考動画に合わせ、速さ 0〜6 m/s を「濃青 → 水色 → 緑 → 黄 → 赤」の 5 色制御点の区間線形補間（Jet 風カラーマップ）で表す。</li>
   <li>SPH の速度は粒子ごとに細かく揺らぐため、そのまま着色すると色がまだらになる。CPU 側で近傍リストを使い「自分と近傍の速さの平均」を描画用の速さとして渡す（<code>GetRenderData</code>）。物理には影響しない。</li>
@@ -375,13 +465,13 @@ o.posH = mul(float4(posV, 1), Proj);
 </ul>
 
 <!-- ===================== 10 ===================== -->
-<h1>10. 表面生成（スクリーンスペース流体レンダリング）</h1>
+<h1>11. 表面生成（スクリーンスペース流体レンダリング）</h1>
 <p>粒子群から陽なメッシュ（Marching Cubes 等）を作る代わりに、<b>画面空間で深度を平滑化して法線を復元する</b>手法（van der Laan, Green, Sainz 2009）を簡略化して実装した。3 パスで構成される。</p>
 
-<h2>10.1 パス 1: 深度</h2>
-<p>粒子を 9 章と同じ球インポスターで描き、色の代わりにビュー空間の <i>z</i> を <code>R32_FLOAT</code> テクスチャに出力する。メインの深度バッファ（地形描画済み）と組で描くため、地形の後ろの粒子は自動的に隠れる。テクスチャは 0 でクリアし、0 = 流体なしとして扱う。表面用の球半径は粒子間隔の 1.3 倍とし、隣の球と重なって隙間を作らない。</p>
+<h2>11.1 パス 1: 深度</h2>
+<p>粒子を 10 章と同じ球インポスターで描き、色の代わりにビュー空間の <i>z</i> を <code>R32_FLOAT</code> テクスチャに出力する。メインの深度バッファ（地形描画済み）と組で描くため、地形の後ろの粒子は自動的に隠れる。テクスチャは 0 でクリアし、0 = 流体なしとして扱う。表面用の球半径は粒子間隔の 1.3 倍とし、隣の球と重なって隙間を作らない。</p>
 
-<h2>10.2 パス 2: バイラテラルぼかし（分離可能）</h2>
+<h2>11.2 パス 2: バイラテラルぼかし（分離可能）</h2>
 <div class="formula">
   <i>w</i><sub><i>k</i></sub> = exp(−<i>k</i><sup>2</sup> / 2<i>σ</i><sub>s</sub><sup>2</sup>) · exp(−(<i>d</i><sub><i>k</i></sub> − <i>d</i><sub>0</sub>)<sup>2</sup> / 2<i>σ</i><sub>d</sub><sup>2</sup>),&nbsp;&nbsp;
   <i>d</i>′ = Σ <i>w</i><sub><i>k</i></sub> <i>d</i><sub><i>k</i></sub> / Σ <i>w</i><sub><i>k</i></sub>
@@ -393,7 +483,7 @@ o.posH = mul(float4(posV, 1), Proj);
   <li>横 → 縦の分離可能フィルタを 4 回反復（計 8 パス）。1 パスあたり最大 49 タップ。</li>
 </ul>
 
-<h2>10.3 パス 3: 法線復元と合成</h2>
+<h2>11.3 パス 3: 法線復元と合成</h2>
 <p>ぼかした深度からビュー空間座標を復元し、隣接ピクセルとの差分から法線を求める。</p>
 <div class="formula">
   <b>p</b>(<i>u</i>, <i>v</i>, <i>d</i>) = (ndc<sub>x</sub> · <i>d</i> / Proj<sub>00</sub>,&nbsp; ndc<sub>y</sub> · <i>d</i> / Proj<sub>11</sub>,&nbsp; <i>d</i>)<br>
@@ -409,8 +499,8 @@ o.posH = mul(float4(posV, 1), Proj);
 <p><i>C</i><sub>w</sub> = (0.64, 0.68, 0.78) は参考動画の灰青色に合わせた。</p>
 
 <!-- ===================== 11 ===================== -->
-<h1>11. 描画パイプラインと定数バッファ</h1>
-<h2>11.1 定数バッファ（b0）</h2>
+<h1>12. 描画パイプラインと定数バッファ</h1>
+<h2>12.1 定数バッファ（b0）</h2>
 <p>全シェーダーで 1 つの <code>cbuffer CBFrame</code>（320 バイト）を共有する。C++ 側 <code>FrameConstants</code> と配置を一致させ、<code>static_assert</code> で 16 バイト境界を検証している。</p>
 <table>
   <tr><th>メンバ</th><th>内容</th></tr>
@@ -421,7 +511,7 @@ o.posH = mul(float4(posV, 1), Proj);
 </table>
 <div class="note"><b>行列の転置について</b>: DirectXMath は行優先で <b>v</b>′ = <b>v</b> <i>M</i> の規約、HLSL の既定は列優先パッキング。CPU 側で転置して転送すると、HLSL で <code>mul(float4(v,1), M)</code> と書け、<code>M._m00</code>, <code>M._m11</code> も数学どおりの要素になる（法線復元で使用）。</div>
 
-<h2>11.2 ステートとリソース</h2>
+<h2>12.2 ステートとリソース</h2>
 <table>
   <tr><th>種別</th><th>用途</th></tr>
   <tr><td>ラスタライザ（裏面カリング / なし）</td><td>地形 / ビルボード・フルスクリーン三角形</td></tr>
@@ -433,18 +523,18 @@ o.posH = mul(float4(posV, 1), Proj);
 </table>
 <p>フルスクリーンパスは <code>SV_VertexID</code> から (−1,1)(3,1)(−1,−3) の 1 枚の三角形を生成し、画面全体を覆う（四角形 2 枚より対角線上の重複処理がない）。</p>
 
-<h2>11.3 リサイズ処理</h2>
+<h2>12.3 リサイズ処理</h2>
 <p><code>WM_SIZE</code> で RTV/DSV を解放 → <code>ResizeBuffers</code> → 再作成。続けて FluidRenderer の深度テクスチャも作り直す。初期化完了前の <code>WM_SIZE</code> はフラグで無視する。</p>
 
 <!-- ===================== 12 ===================== -->
-<h1>12. カメラ・入力・メインループ</h1>
-<h2>12.1 オービットカメラ</h2>
+<h1>13. カメラ・入力・メインループ</h1>
+<h2>13.1 オービットカメラ</h2>
 <div class="formula">
   <b>pos</b> = <b>target</b> + <i>D</i> (cos<i>φ</i> sin<i>θ</i>,&nbsp; sin<i>φ</i>,&nbsp; cos<i>φ</i> cos<i>θ</i>)
 </div>
 <p><i>θ</i>（yaw）, <i>φ</i>（pitch, ±89° にクランプ）, <i>D</i>（3〜300 m）。既定は下流側 +z から上流を見下ろす構図（pitch 34°, D 42）で、参考動画と同じく水が奥から手前へ流れて見える。パンはカメラの右・上ベクトル方向に注視点を動かす。</p>
 
-<h2>12.2 メインループ</h2>
+<h2>13.2 メインループ</h2>
 <pre>
 while (msg != WM_QUIT) {
     if (PeekMessage) { Dispatch; continue; }     // 入力を全て処理してから描画
@@ -460,7 +550,7 @@ while (msg != WM_QUIT) {
 </pre>
 
 <!-- ===================== 13 ===================== -->
-<h1>13. 性能評価</h1>
+<h1>14. 性能評価</h1>
 <table>
   <tr><th>段階</th><th>粒子数</th><th>FPS</th><th>備考</th></tr>
   <tr><td>初期実装（毎パス近傍走査、サブステップ可変）</td><td>8,300</td><td>20〜24</td><td>処理落ち → サブステップ増加のスパイラル</td></tr>
@@ -469,7 +559,7 @@ while (msg != WM_QUIT) {
   <tr><td>同、表面生成モード</td><td>12,000</td><td>54〜80</td><td>ぼかし 8 パス分の GPU 負荷</td></tr>
 </table>
 <p class="small">測定環境: 8 論理コア CPU、1280×800、vsync 有効（上限 120 fps 表示はモニタ依存）。</p>
-<h2>13.1 計算量の内訳（1 サブステップ、12,000 粒子）</h2>
+<h2>14.1 計算量の内訳（1 サブステップ、12,000 粒子）</h2>
 <ul>
   <li>近傍候補: 27 セル × 平均 8 粒子 ≈ 216 候補/粒子 → 2.6 M 距離判定</li>
   <li>近傍数: 約 33〜60/粒子 → 密度・力の合計で約 1.1 M カーネル評価</li>
@@ -478,7 +568,7 @@ while (msg != WM_QUIT) {
 </ul>
 
 <!-- ===================== 14 ===================== -->
-<h1>14. 調整パラメータ一覧（SPHParams）</h1>
+<h1>15. 調整パラメータ一覧（SPHParams）</h1>
 <table>
   <tr><th>パラメータ</th><th>既定値</th><th>意味・調整の目安</th></tr>
   <tr><td>particleSpacing</td><td>0.30 m</td><td>小さくすると細かいが粒子数が 3 乗で増える</td></tr>
@@ -499,7 +589,7 @@ while (msg != WM_QUIT) {
 <p>描画側: <code>MAX_SPEED_FOR_COLOR</code>（6 m/s、Particle.hlsl）、<code>BLUR_WORLD_RADIUS</code> / <code>BLUR_DEPTH_SIGMA</code>（0.9 / 1.5、FluidSurface.hlsl）、ぼかし反復回数（4、FluidRenderer.h）。</p>
 
 <!-- ===================== 15 ===================== -->
-<h1>15. 既知の制約と拡張案</h1>
+<h1>16. 既知の制約と拡張案</h1>
 <table>
   <tr><th>制約</th><th>拡張案</th></tr>
   <tr><td>CPU SPH のため粒子数は 1〜2 万が上限</td><td>コンピュートシェーダーへ移植（格子構築は GPU 基数ソート、密度・力はスレッドグループ単位）。10 万粒子以上が可能</td></tr>
@@ -508,28 +598,32 @@ while (msg != WM_QUIT) {
   <tr><td>水面は不透明に近い α = 0.9 で厚みを考慮していない</td><td>厚みパス（加算ブレンドで粒子の厚さを蓄積）による透過率・屈折の計算</td></tr>
   <tr><td>スクリーンスペース法は視点依存で、画面外の情報がない</td><td>Marching Cubes / 異方性カーネル（Yu &amp; Turk 2013）による陽なメッシュ生成</td></tr>
   <tr><td>表面張力なし</td><td>Akinci らの凝集力モデル、または負圧の一部を許容</td></tr>
-  <tr><td>地形は高さマップ（オーバーハング不可）</td><td>符号付き距離場（SDF）による任意形状との衝突</td></tr>
+  <tr><td>地形は高さマップ（OBJ 取り込み時もオーバーハング下面は不可）</td><td>符号付き距離場（SDF）による任意形状との衝突</td></tr>
 </table>
 
 <!-- ===================== 16 ===================== -->
-<h1>16. 付録</h1>
-<h2>16.1 ファイル一覧</h2>
+<h1>17. 付録</h1>
+<h2>17.1 ファイル一覧</h2>
 <table>
   <tr><th>パス</th><th>行数</th><th>内容</th></tr>
   <tr><td>src/main.cpp</td><td>≈ 340</td><td>エントリーポイント、入力、メインループ</td></tr>
   <tr><td>src/Graphics.h/.cpp</td><td>≈ 420</td><td>D3D11 基盤</td></tr>
   <tr><td>src/Camera.h/.cpp</td><td>≈ 190</td><td>オービットカメラ</td></tr>
   <tr><td>src/Noise.h/.cpp</td><td>≈ 340</td><td>ノイズ</td></tr>
-  <tr><td>src/Terrain.h/.cpp</td><td>≈ 560</td><td>地形</td></tr>
+  <tr><td>src/Terrain.h/.cpp</td><td>≈ 800</td><td>地形（OBJ 取り込み・焼き込みを含む）</td></tr>
   <tr><td>src/TextureLoader.h/.cpp</td><td>≈ 200</td><td>WIC 画像読み込み</td></tr>
+  <tr><td>src/MeshLoader.h/.cpp</td><td>≈ 280</td><td>OBJ 読み込み</td></tr>
   <tr><td>src/SPH.h/.cpp</td><td>≈ 780</td><td>流体</td></tr>
   <tr><td>src/FluidRenderer.h/.cpp</td><td>≈ 420</td><td>粒子・表面描画</td></tr>
   <tr><td>shaders/*.hlsl(i)</td><td>≈ 450</td><td>Common / Terrain / Particle / FluidSurface</td></tr>
   <tr><td>docs/API.md, docs/FLOW.md</td><td>—</td><td>API 仕様書、Mermaid フロー図</td></tr>
   <tr><td>assets/rock.png</td><td>—</td><td>岩テクスチャ（差し替え可）</td></tr>
+  <tr><td>assets/terrain.obj</td><td>—</td><td>地形メッシュ（差し替え可、無ければ手続き生成）</td></tr>
+  <tr><td>tools/blender_export_valley.py</td><td>—</td><td>Blender 用: 試作用の谷を生成して OBJ 出力</td></tr>
+  <tr><td>tools/make_test_valley.py</td><td>—</td><td>Blender なしで同じ OBJ を出力</td></tr>
 </table>
 
-<h2>16.2 参考文献</h2>
+<h2>17.2 参考文献</h2>
 <ol>
   <li>M. Müller, D. Charypar, M. Gross, "Particle-Based Fluid Simulation for Interactive Applications," SCA 2003.</li>
   <li>W. J. van der Laan, S. Green, M. Sainz, "Screen Space Fluid Rendering with Curvature Flow," I3D 2009.</li>
