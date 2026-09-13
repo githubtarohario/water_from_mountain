@@ -11,6 +11,7 @@
 #pragma comment(lib, "d3dcompiler.lib")
 
 std::wstring Graphics::s_shaderDir = L"shaders";
+std::wstring Graphics::s_assetDir  = L"assets";
 
 //-----------------------------------------------------------------------------
 // SetShaderDirectory
@@ -29,6 +30,24 @@ void Graphics::SetShaderDirectory(const std::wstring& dir)
 std::wstring Graphics::ShaderPath(const wchar_t* file)
 {
     return s_shaderDir + L"\\" + file;
+}
+
+//-----------------------------------------------------------------------------
+// SetAssetDirectory
+//-----------------------------------------------------------------------------
+void Graphics::SetAssetDirectory(const std::wstring& dir)
+{
+    s_assetDir = dir;
+    while (!s_assetDir.empty() && (s_assetDir.back() == L'\\' || s_assetDir.back() == L'/'))
+        s_assetDir.pop_back();
+}
+
+//-----------------------------------------------------------------------------
+// AssetPath
+//-----------------------------------------------------------------------------
+std::wstring Graphics::AssetPath(const wchar_t* file)
+{
+    return s_assetDir + L"\\" + file;
 }
 
 //-----------------------------------------------------------------------------

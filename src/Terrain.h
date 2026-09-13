@@ -102,11 +102,22 @@ private:
 
     //-------------------------------------------------------------------------
     // 関数名 : CreateRockTexture
+    // 概要   : 岩肌テクスチャを用意する。
+    //          assets フォルダの画像ファイル (ROCK_TEXTURE_FILES の順に探す) を
+    //          読み込み、見つからない/読めない場合はノイズによる手続き生成に切り替える。
+    // 引数   : gfx : Graphics
+    // 戻り値 : true = 成功, false = 失敗 (どちらの方法でも作れなかった)
+    //-------------------------------------------------------------------------
+    bool CreateRockTexture(Graphics& gfx);
+
+    //-------------------------------------------------------------------------
+    // 関数名 : CreateProceduralRockTexture
     // 概要   : ノイズから岩肌風のテクスチャを CPU で生成し、GPU テクスチャにする
+    //          (画像ファイルがないときのフォールバック)
     // 引数   : gfx : Graphics
     // 戻り値 : true = 成功, false = 失敗
     //-------------------------------------------------------------------------
-    bool CreateRockTexture(Graphics& gfx);
+    bool CreateProceduralRockTexture(Graphics& gfx);
 
     //-------------------------------------------------------------------------
     // 関数名 : CreateShaders
@@ -126,4 +137,17 @@ private:
     ComPtr<ID3D11PixelShader>         m_ps;            // ピクセルシェーダー
     ComPtr<ID3D11InputLayout>         m_inputLayout;   // 頂点入力レイアウト
     ComPtr<ID3D11ShaderResourceView>  m_rockTexSRV;    // 岩テクスチャのビュー
+    bool                              m_textureFromFile = false;   // true = 画像ファイル由来, false = 手続き生成
+
+public:
+    // 岩テクスチャとして探す画像ファイル名 (assets フォルダ内、先頭から順に試す)
+    static constexpr const wchar_t* ROCK_TEXTURE_FILES[] = { L"rock.png", L"rock.jpg", L"rock.jpeg", L"rock.bmp" };
+
+    //-------------------------------------------------------------------------
+    // 関数名 : IsTextureFromFile
+    // 概要   : 岩テクスチャが画像ファイルから読み込まれたかを返す (タイトル表示用)
+    // 引数   : なし
+    // 戻り値 : true = ファイル由来, false = 手続き生成
+    //-------------------------------------------------------------------------
+    bool IsTextureFromFile() const { return m_textureFromFile; }
 };

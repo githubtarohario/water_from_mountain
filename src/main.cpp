@@ -86,14 +86,15 @@ namespace
     }
 
     //-------------------------------------------------------------------------
-    // 関数名 : FindShaderDirectory
-    // 概要   : シェーダーフォルダを探して Graphics に登録する。
-    //          実行ファイルの場所が bin\ や x64\Release\ でも動くように、
+    // 関数名 : FindProjectDirectories
+    // 概要   : shaders フォルダと assets フォルダを探して Graphics に登録する。
+    //          実行ファイルの場所が bin\ や bin\Release\ でも動くように、
     //          カレントディレクトリ → exe のフォルダ → その親 → さらに親 の順に探す。
+    //          (shaders\Common.hlsli の存在で判定し、assets は同じ階層とみなす)
     // 引数   : なし
-    // 戻り値 : true = 見つかった
+    // 戻り値 : true = shaders が見つかった (assets はなくてもよい: ノイズ生成にフォールバック)
     //-------------------------------------------------------------------------
-    bool FindShaderDirectory()
+    bool FindProjectDirectories()
     {
         wchar_t exePath[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -102,17 +103,18 @@ namespace
         if (slash != std::wstring::npos)
             exeDir = exeDir.substr(0, slash);
 
-        const std::wstring candidates[] = {
-            L"shaders",
-            exeDir + L"\\shaders",
-            exeDir + L"\\..\\shaders",
-            exeDir + L"\\..\\..\\shaders",
+        const std::wstring roots[] = {
+            L".",
+            exeDir,
+            exeDir + L"\\..",
+            exeDir + L"\\..\\..",
         };
-        for (const auto& dir : candidates)
+        for (const auto& root : roots)
         {
-            if (FileExists(dir + L"\\Common.hlsli"))
+            if (FileExists(root + L"\\shaders\\Common.hlsli"))
             {
-                Graphics::SetShaderDirectory(dir);
+                Graphics::SetShaderDirectory(root + L"\\shaders");
+                Graphics::SetAssetDirectory(root + L"\\assets");
                 return true;
             }
         }
@@ -170,10 +172,11 @@ namespace
     void UpdateTitle(HWND hWnd)
     {
         wchar_t buf[256];
-        swprintf_s(buf, L"山から粒子が落ちる SPH  |  粒子: %d  FPS: %.0f  モード: %s%s  |  [1]粒子 [2]表面 [Space]停止 [R]リセット",
+        swprintf_s(buf, L"山から粒子が落ちる SPH  |  粒子: %d  FPS: %.0f  モード: %s%s  テクスチャ: %s  |  [1]粒子 [2]表面 [Space]停止 [R]リセット",
             g_app.sph.GetParticleCount(), g_app.fps,
             g_app.mode == FluidRenderMode::Particles ? L"粒子" : L"表面生成",
-            g_app.paused ? L" (一時停止)" : L"");
+            g_app.paused ? L" (一時停止)" : L"",
+            g_app.terrain.IsTextureFromFile() ? L"画像" : L"ノイズ生成");
         SetWindowTextW(hWnd, buf);
     }
 
@@ -299,7 +302,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
         return 1;
 
     // ---- 初期化 ----
-    if (!FindShaderDirectory())
+    if (!FindProjectDirectories())
     {
         MessageBoxW(hWnd, L"shaders フォルダが見つかりません。\n実行ファイルと同じ場所か、その親フォルダに shaders を置いてください。",
                     L"エラー", MB_OK | MB_ICONERROR);

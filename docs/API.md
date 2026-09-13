@@ -16,6 +16,7 @@ DirectX 11 による「山から粒子が落ちる」SPH 流体シミュレー�
 3. [FrameConstants（構造体）](#3-frameconstants構造体)
 4. [Camera](#4-camera)
 5. [Terrain](#5-terrain)
+5A. [TextureLoader（名前空間）](#5a-textureloader名前空間)
 6. [SPHParams（構造体）](#6-sphparams構造体)
 7. [SPH](#7-sph)
 8. [FluidRenderer](#8-fluidrenderer)
@@ -63,6 +64,8 @@ DirectX 11 による「山から粒子が落ちる」SPH 流体シミュレー�
 | `static bool CompileShaderFromFile(const std::wstring& path, const char* entryPoint, const char* target, ComPtr<ID3DBlob>& outBlob)` | `path`: HLSL パス<br>`entryPoint`: 例 `"VSMain"`<br>`target`: 例 `"vs_5_0"`<br>`outBlob`: [出力] バイトコード | 成功で `true` | `D3DCompileFromFile` を使用。`#include` は標準インクルードハンドラ（ソースファイルのフォルダ基準）。失敗時はエラー文をメッセージボックスに表示。 |
 | `static void SetShaderDirectory(const std::wstring& dir)` | `dir`: シェーダーフォルダ | — | 末尾の区切り文字を除去して保持。既定は `"shaders"`。 |
 | `static std::wstring ShaderPath(const wchar_t* file)` | `file`: ファイル名 | フルパス | `dir + "\\" + file`。 |
+| `static void SetAssetDirectory(const std::wstring& dir)` | `dir`: アセットフォルダ | — | 画像などの置き場所。既定は `"assets"`。 |
+| `static std::wstring AssetPath(const wchar_t* file)` | `file`: ファイル名 | フルパス | `dir + "\\" + file`。 |
 | `bool CreateConstantBuffer(UINT byteSize, ComPtr<ID3D11Buffer>& outBuf)` | `byteSize`: バイト数（16 の倍数に切り上げ） | 成功で `true` | `USAGE_DYNAMIC` / `CPU_ACCESS_WRITE` の定数バッファを作成。 |
 | `void UpdateBuffer(ID3D11Buffer* buf, const void* data, size_t byteSize)` | 書き込み先・データ・サイズ | — | `Map(WRITE_DISCARD)` → `memcpy` → `Unmap`。DYNAMIC バッファ専用。 |
 
@@ -140,11 +143,19 @@ DirectX 11 による「山から粒子が落ちる」SPH 流体シミュレー�
 
 | 関数 | 引数 | 戻り値 | 説明 |
 |---|---|---|---|
-| `bool Initialize(Graphics& gfx)` | `gfx` | 成功で `true` | 高さマップ生成 → メッシュ作成 → 岩テクスチャ生成（1024², ミップ付き）→ `Terrain.hlsl` コンパイル。 |
+| `bool Initialize(Graphics& gfx)` | `gfx` | 成功で `true` | 高さマップ生成 → メッシュ作成 → 岩テクスチャ準備（画像読み込み、失敗時はノイズ生成）→ `Terrain.hlsl` コンパイル。 |
 | `void Render(Graphics& gfx)` | `gfx` | — | 地形を `DrawIndexed`。前提: `b0` の定数バッファが設定済み。副作用: IA/VS/PS/RS/OM ステートを地形用に変更、`t0`/`s0` に岩テクスチャ/サンプラーをバインド。 |
 | `float GetHeight(float x, float z) const` | ワールド座標（範囲外は端にクランプ） | 地面の高さ y | 高さマップの双線形補間。スレッドセーフ（読み取りのみ）。 |
 | `XMFLOAT3 GetNormal(float x, float z) const` | ワールド座標 | 上向き単位法線 | 中心差分 `normalize(-∂h/∂x, 1, -∂h/∂z)`。 |
 | `static float ValleyCenterX(float z)` | `z` | 谷の中心の x | `4 sin(0.16 z) + 2 sin(0.41 z + 1.7)`。エミッタ位置の決定にも使用。 |
+| `bool IsTextureFromFile() const` | — | `true` = 画像ファイル由来 | 岩テクスチャの出所（タイトル表示用）。 |
+| `static constexpr const wchar_t* ROCK_TEXTURE_FILES[]` | — | `{ "rock.png", "rock.jpg", "rock.jpeg", "rock.bmp" }` | `assets` 内でこの順に探す。 |
+
+### 5.2.1 岩テクスチャの取得（`CreateRockTexture`、内部）
+
+1. `ROCK_TEXTURE_FILES` を順に `Graphics::AssetPath` で解決し `TextureLoader::LoadFromFile` を試す
+2. すべて失敗 → `CreateProceduralRockTexture`（1024² をノイズで生成し `TextureLoader::CreateFromPixels`）
+3. どちらもミップマップ付き `R8G8B8A8_UNORM`。サンプラーは異方性 8 × WRAP なのでシームレス画像を推奨
 
 ### 5.3 高さ関数（内部仕様）
 
@@ -168,6 +179,21 @@ h(x, z)  = base + floorU + mountain + rough + ridge
 | `TEXCOORD0` | `float2` | `(x, z) * 0.12`（約 8.3 m でテクスチャ 1 周） |
 
 インデックス: 32bit、三角形リスト。上から見て時計回り（D3D 既定の表面）。
+
+---
+
+## 5A. TextureLoader（名前空間）
+
+ファイル: `src/TextureLoader.h`, `src/TextureLoader.cpp`
+役割: WIC（Windows Imaging Component）で画像ファイルを読み込み、ミップマップ付きテクスチャの SRV を作る。外部ライブラリ不要。
+リンク: `windowscodecs.lib`, `ole32.lib`（`#pragma comment` 済み）。
+
+| 関数 | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `bool LoadFromFile(Graphics& gfx, const std::wstring& path, ComPtr<ID3D11ShaderResourceView>& outSRV, UINT* outWidth = nullptr, UINT* outHeight = nullptr)` | `path`: 画像パス（PNG/JPG/BMP/TIFF/GIF 等、形式は中身で判定）<br>`outSRV`: [出力]<br>`outWidth/outHeight`: [出力・省略可] | 成功で `true`。失敗時は `outSRV` を変更しない | `IWICBitmapDecoder` → 先頭フレーム → `IWICFormatConverter` で 32bpp RGBA に変換 → `CopyPixels` → `CreateFromPixels`。メッセージボックスは出さない（呼び出し側でフォールバック可能）。 |
+| `bool CreateFromPixels(Graphics& gfx, const void* pixels, UINT width, UINT height, ComPtr<ID3D11ShaderResourceView>& outSRV)` | `pixels`: RGBA8（行ピッチ = `width*4`） | 成功で `true` | `MipLevels=0` + `GENERATE_MIPS` でテクスチャ作成、レベル 0 に `UpdateSubresource`、`GenerateMips`。 |
+
+内部: `GetWICFactory()` が `CoInitializeEx(COINIT_MULTITHREADED)` を呼び `IWICImagingFactory` を静的に 1 回だけ生成。
 
 ---
 
@@ -282,9 +308,9 @@ enum class FluidRenderMode { Particles, Surface };
 | 関数 | 説明 |
 |---|---|
 | `bool FileExists(const std::wstring& path)` | ファイル存在チェック |
-| `bool FindShaderDirectory()` | `shaders` → `exe\shaders` → `exe\..\shaders` → `exe\..\..\shaders` の順に `Common.hlsli` を探し `Graphics::SetShaderDirectory` |
+| `bool FindProjectDirectories()` | `.` → `exe` → `exe\..` → `exe\..\..` の順に `shaders\Common.hlsli` を探し、見つかった階層の `shaders` / `assets` を `Graphics::SetShaderDirectory` / `SetAssetDirectory` に登録 |
 | `void UpdateFrameConstants()` | カメラ・光源から `FrameConstants` を組み立て `b0` に転送し VS/PS にバインド。光源方向 `normalize(-0.35, 0.85, 0.45)` |
-| `void UpdateTitle(HWND)` | タイトルバーに粒子数・FPS・モードを表示 |
+| `void UpdateTitle(HWND)` | タイトルバーに粒子数・FPS・モード・テクスチャの出所（画像 / ノイズ生成）を表示 |
 | `LRESULT WndProc(...)` | 入力処理（下表） |
 | `int wWinMain(...)` | ウィンドウ作成（クライアント 1280×800）→ 初期化 → メインループ |
 
@@ -341,5 +367,6 @@ enum class FluidRenderMode { Particles, Surface };
 
 - 初期化系関数は `bool` を返し、失敗時は `false`。呼び出し側（`wWinMain`）は `return 1` で終了。
 - D3D11 デバイス作成失敗・HLSL コンパイル失敗・`shaders` フォルダ未検出はメッセージボックスで通知。
+- 岩テクスチャの画像が読めない場合はエラーにせず、ノイズ生成にフォールバックする（タイトルバーで確認可能）。
 - シミュレーション（`SPH`）は例外を投げない。発散対策として速度上限・加速度上限・サブステップ上限を持つ。
 - リソースはすべて `Microsoft::WRL::ComPtr` で管理し、デストラクタで自動解放。

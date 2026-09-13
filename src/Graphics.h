@@ -84,6 +84,16 @@ public:
     static std::wstring ShaderPath(const wchar_t* file);
 
     //-------------------------------------------------------------------------
+    // 関数名 : SetAssetDirectory / AssetPath
+    // 概要   : 画像などのアセットを置いたフォルダを登録し、ファイル名からフルパスを作る
+    // 引数   : dir  : アセットフォルダ
+    //          file : ファイル名 (例 L"rock.png")
+    // 戻り値 : AssetPath はフルパス文字列
+    //-------------------------------------------------------------------------
+    static void SetAssetDirectory(const std::wstring& dir);
+    static std::wstring AssetPath(const wchar_t* file);
+
+    //-------------------------------------------------------------------------
     // 関数名 : CreateConstantBuffer
     // 概要   : 毎フレーム CPU から更新する定数バッファ (DYNAMIC) を作る
     // 引数   : byteSize : バッファサイズ (16 の倍数に切り上げられる)
@@ -158,4 +168,5 @@ private:
     int m_height = 0;   // 現在のバックバッファ高さ
 
     static std::wstring s_shaderDir;   // シェーダーフォルダ (SetShaderDirectory で設定)
+    static std::wstring s_assetDir;    // アセットフォルダ (SetAssetDirectory で設定)
 };

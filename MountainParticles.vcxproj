@@ -60,7 +60,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;windowscodecs.lib;ole32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -94,6 +94,7 @@
     <ClCompile Include="src\Noise.cpp" />
     <ClCompile Include="src\SPH.cpp" />
     <ClCompile Include="src\Terrain.cpp" />
+    <ClCompile Include="src\TextureLoader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Camera.h" />
@@ -103,6 +104,7 @@
     <ClInclude Include="src\Noise.h" />
     <ClInclude Include="src\SPH.h" />
     <ClInclude Include="src\Terrain.h" />
+    <ClInclude Include="src\TextureLoader.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- HLSL は実行時に D3DCompileFromFile でコンパイルするので、ここではビルド対象外 (None) にする -->
@@ -110,6 +112,7 @@
     <None Include="shaders\Terrain.hlsl" />
     <None Include="shaders\Particle.hlsl" />
     <None Include="shaders\FluidSurface.hlsl" />
+    <None Include="assets\rock.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

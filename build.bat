@@ -32,7 +32,7 @@ rem /openmp  : SPH の並列化 (#pragma omp) を有効化
 rem /O2      : 速度最適化
 cl /nologo /std:c++17 /EHsc /O2 /W3 /utf-8 /openmp /DUNICODE /D_UNICODE /DNOMINMAX /DNDEBUG ^
    /Fo"obj\\" /Fe"bin\MountainParticles.exe" src\*.cpp ^
-   /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+   /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib d3d11.lib dxgi.lib d3dcompiler.lib windowscodecs.lib ole32.lib
 if errorlevel 1 (
     echo ビルドに失敗しました。
     exit /b 1

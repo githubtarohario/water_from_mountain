@@ -15,6 +15,7 @@ graph TB
         SPH[SPH<br/>流体粒子]
         TER[Terrain<br/>地形 / 高さマップ]
         NOISE[Noise<br/>パーリンノイズ]
+        TL[TextureLoader<br/>WIC 画像読み込み]
     end
 
     subgraph Render["描画"]
@@ -39,7 +40,8 @@ graph TB
     LOOP --> CB
     SPH -->|GetHeight / GetNormal<br/>衝突判定| TER
     TER --> NOISE
-    TER -->|岩テクスチャ生成| NOISE
+    TER -->|岩テクスチャ生成 フォールバック| NOISE
+    TER -->|assets/rock.png| TL
     CAM -->|View / Proj| CB
     CB --> HC
     TER --> GFX
@@ -57,15 +59,18 @@ graph TB
 ```mermaid
 flowchart TD
     START([起動 wWinMain]) --> REG[ウィンドウクラス登録<br/>CreateWindow 1280x800]
-    REG --> FSD{FindShaderDirectory<br/>shaders フォルダ検出}
+    REG --> FSD{FindProjectDirectories<br/>shaders / assets フォルダ検出}
     FSD -->|見つからない| ERR1[メッセージボックス] --> END1([終了 1])
     FSD -->|見つかった| GI[Graphics::Initialize<br/>デバイス / スワップチェーン / RTV / DSV / ステート]
     GI --> CBUF[CreateConstantBuffer<br/>FrameConstants]
     CBUF --> TI[Terrain::Initialize]
     TI --> TI1[BuildHeightMap<br/>257x257 で HeightFunction 評価]
     TI1 --> TI2[BuildMesh<br/>頂点 / 法線 / UV / インデックス]
-    TI2 --> TI3[CreateRockTexture<br/>1024x1024 ノイズ生成 + GenerateMips]
-    TI3 --> TI4[CreateShaders<br/>Terrain.hlsl]
+    TI2 --> TI3{CreateRockTexture<br/>assets/rock.png 等を<br/>TextureLoader::LoadFromFile}
+    TI3 -->|読み込み成功| TI3B[画像テクスチャ + GenerateMips]
+    TI3 -->|ファイルなし / 失敗| TI3C[CreateProceduralRockTexture<br/>1024x1024 ノイズ生成 + GenerateMips]
+    TI3B --> TI4[CreateShaders<br/>Terrain.hlsl]
+    TI3C --> TI4
     TI4 --> SI[SPH::Initialize<br/>カーネル係数 / 配列 / ハッシュ表]
     SI --> FI[FluidRenderer::Initialize<br/>粒子バッファ / 6 シェーダー / 深度テクスチャ x2]
     FI --> SHOW[ShowWindow]
@@ -231,6 +236,9 @@ graph LR
     subgraph GPU
         VB[頂点/インデックスバッファ<br/>IMMUTABLE]
         TX[岩テクスチャ<br/>R8G8B8A8 + mips]
+    end
+    subgraph Disk
+        IMG[assets/rock.png]
         SB[StructuredBuffer float4<br/>DYNAMIC]
         CB[cbuffer b0<br/>DYNAMIC]
         DT0[depthTex 0<br/>R32_FLOAT]
@@ -238,6 +246,7 @@ graph LR
         BB[バックバッファ<br/>R8G8B8A8]
         DS[深度バッファ<br/>D24S8]
     end
+    IMG -->|起動時 1 回 WIC| TX
     HM -->|起動時 1 回| VB
     HM -->|GetHeight/GetNormal| PD
     PD -->|GetRenderData| RD

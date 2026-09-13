@@ -4,6 +4,7 @@
 //=============================================================================
 #include "Terrain.h"
 #include "Noise.h"
+#include "TextureLoader.h"
 #include <algorithm>
 #include <cmath>
 
@@ -228,6 +229,28 @@ bool Terrain::BuildMesh(Graphics& gfx)
 
 //-----------------------------------------------------------------------------
 // CreateRockTexture
+//   1. Graphics::AssetPath(ROCK_TEXTURE_FILES[i]) を順に TextureLoader::LoadFromFile で試す
+//   2. すべて失敗したら CreateProceduralRockTexture にフォールバック
+//-----------------------------------------------------------------------------
+bool Terrain::CreateRockTexture(Graphics& gfx)
+{
+    for (const wchar_t* file : ROCK_TEXTURE_FILES)
+    {
+        const std::wstring path = Graphics::AssetPath(file);
+        if (TextureLoader::LoadFromFile(gfx, path, m_rockTexSRV))
+        {
+            m_textureFromFile = true;
+            return true;
+        }
+    }
+
+    // 画像が見つからない → ノイズ生成にフォールバック
+    m_textureFromFile = false;
+    return CreateProceduralRockTexture(gfx);
+}
+
+//-----------------------------------------------------------------------------
+// CreateProceduralRockTexture
 //   アルゴリズム (ピクセルごと):
 //     f1     = タイリング fBm (大きなまだら)      → 明るい肌色と茶色を混ぜる
 //     f2     = タイリング fBm (別位相・細かい)    → 赤みのある斑点を加える
@@ -236,7 +259,7 @@ bool Terrain::BuildMesh(Graphics& gfx)
 //     color  = lerp(dark, light, f1) → 赤斑点を混合 → 亀裂で暗く → ざらつき
 //   その後、ミップマップ付きテクスチャを作り GenerateMips で縮小版を自動生成する。
 //-----------------------------------------------------------------------------
-bool Terrain::CreateRockTexture(Graphics& gfx)
+bool Terrain::CreateProceduralRockTexture(Graphics& gfx)
 {
     const int texSize = 1024;
     std::vector<uint32_t> pixels(static_cast<size_t>(texSize) * texSize);
@@ -280,34 +303,8 @@ bool Terrain::CreateRockTexture(Graphics& gfx)
         }
     }
 
-    // ミップマップ自動生成のため RENDER_TARGET も付けて DEFAULT で作る
-    D3D11_TEXTURE2D_DESC td = {};
-    td.Width     = texSize;
-    td.Height    = texSize;
-    td.MipLevels = 0;                                   // 0 = 全ミップレベルを作る
-    td.ArraySize = 1;
-    td.Format    = DXGI_FORMAT_R8G8B8A8_UNORM;
-    td.SampleDesc.Count = 1;
-    td.Usage     = D3D11_USAGE_DEFAULT;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-    td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
-
-    ComPtr<ID3D11Texture2D> tex;
-    if (FAILED(gfx.GetDevice()->CreateTexture2D(&td, nullptr, tex.GetAddressOf())))
-        return false;
-
-    // 最上位ミップ (レベル 0) にピクセルを書き込む
-    gfx.GetContext()->UpdateSubresource(tex.Get(), 0, nullptr, pixels.data(), texSize * sizeof(uint32_t), 0);
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvd = {};
-    srvd.Format = td.Format;
-    srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvd.Texture2D.MipLevels = static_cast<UINT>(-1);   // 全ミップレベル
-    if (FAILED(gfx.GetDevice()->CreateShaderResourceView(tex.Get(), &srvd, m_rockTexSRV.GetAddressOf())))
-        return false;
-
-    gfx.GetContext()->GenerateMips(m_rockTexSRV.Get());
-    return true;
+    // GPU テクスチャ化 (ミップマップ生成込み) はファイル読み込みと共通の処理を使う
+    return TextureLoader::CreateFromPixels(gfx, pixels.data(), texSize, texSize, m_rockTexSRV);
 }
 
 //-----------------------------------------------------------------------------
