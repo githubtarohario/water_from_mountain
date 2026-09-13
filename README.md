@@ -24,6 +24,22 @@ run.bat        … 起動
 
 `shaders` フォルダと `assets` フォルダは実行時に読み込まれます (exe の場所から自動で探します)。
 
+## 地形を Blender から取り込む
+
+`assets/terrain.obj` があれば、起動時にその OBJ メッシュを地形として読み込みます（無ければ手続き生成）。
+タイトルバーの「地形: OBJ / 生成」で確認できます。
+
+1. Blender で地形メッシュを作る（上面図で **上 (+Y) が上流＝奥**、下 (−Y) が下流＝手前）
+2. OBJ エクスポートで **Forward: −Z, Up: Y** を指定して `assets/terrain.obj` に保存
+3. 起動すると自動で 60 m 四方にフィットされ（高さも同じ倍率）、上流端の最も低い点から水が投入されます
+
+試作用の谷を作るスクリプトも同梱しています:
+- `tools/blender_export_valley.py` … Blender 内で実行（または `blender -b -P tools/blender_export_valley.py`）すると谷を生成して OBJ を書き出す
+- `tools/make_test_valley.py` … Blender が無い環境用。同じ谷を同じ OBJ 形式で書き出す（`python tools/make_test_valley.py`）
+
+内部では、メッシュはそのまま描画に使い、衝突判定用には真上から見た高さを 257×257 の高さマップに焼き込んでいます。
+そのため SPH 側の変更なしに任意形状の地形を使えますが、オーバーハング（ひさし）の下面は無視されます。
+
 ## 岩テクスチャの差し替え
 
 `assets/rock.png` (または `rock.jpg` / `rock.jpeg` / `rock.bmp`) を任意の岩の写真に置き換えるだけで反映されます。
@@ -52,7 +68,8 @@ src/
   FrameConstants.h   全シェーダー共通の定数バッファ構造体
   Camera.h/.cpp      オービットカメラ
   Noise.h/.cpp       パーリンノイズ / fBm / 尾根ノイズ (タイリング対応版あり)
-  Terrain.h/.cpp     山の地形 (高さマップ生成、メッシュ、岩テクスチャの読み込み/生成、衝突用の高さ/法線取得)
+  Terrain.h/.cpp     山の地形 (OBJ 読み込み or 高さマップ生成、メッシュ、岩テクスチャ、衝突用の高さ/法線取得)
+  MeshLoader.h/.cpp  Wavefront OBJ の読み込み (v/vt/vn/f、多角形の三角形化、法線計算)
   TextureLoader.h/.cpp  WIC による画像ファイル (PNG/JPG/BMP 等) の読み込みとミップマップ付きテクスチャ作成
   SPH.h/.cpp         SPH 流体シミュレーション (空間ハッシュ近傍探索、密度/圧力/粘性、地形衝突、エミッタ)
   FluidRenderer.h/.cpp  粒子の球描画 (スフィア・インポスター) とスクリーンスペース流体レンダリング
@@ -63,6 +80,10 @@ shaders/
   FluidSurface.hlsl  深度のバイラテラルぼかし、法線復元と水面の合成
 assets/
   rock.png           岩テクスチャ (差し替え可能)
+  terrain.obj        地形メッシュ (差し替え可能。無ければ手続き生成)
+tools/
+  blender_export_valley.py  Blender で試作用の谷を作って OBJ 出力するスクリプト
+  make_test_valley.py       同じ谷を Blender なしで OBJ 出力するスクリプト
 ```
 
 ## ドキュメント

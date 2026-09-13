@@ -91,6 +91,7 @@
     <ClCompile Include="src\FluidRenderer.cpp" />
     <ClCompile Include="src\Graphics.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\MeshLoader.cpp" />
     <ClCompile Include="src\Noise.cpp" />
     <ClCompile Include="src\SPH.cpp" />
     <ClCompile Include="src\Terrain.cpp" />
@@ -101,6 +102,7 @@
     <ClInclude Include="src\FluidRenderer.h" />
     <ClInclude Include="src\FrameConstants.h" />
     <ClInclude Include="src\Graphics.h" />
+    <ClInclude Include="src\MeshLoader.h" />
     <ClInclude Include="src\Noise.h" />
     <ClInclude Include="src\SPH.h" />
     <ClInclude Include="src\Terrain.h" />
@@ -113,6 +115,9 @@
     <None Include="shaders\Particle.hlsl" />
     <None Include="shaders\FluidSurface.hlsl" />
     <None Include="assets\rock.png" />
+    <None Include="assets\terrain.obj" />
+    <None Include="tools\blender_export_valley.py" />
+    <None Include="tools\make_test_valley.py" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

@@ -17,6 +17,7 @@ DirectX 11 による「山から粒子が落ちる」SPH 流体シミュレー�
 4. [Camera](#4-camera)
 5. [Terrain](#5-terrain)
 5A. [TextureLoader（名前空間）](#5a-textureloader名前空間)
+5B. [MeshLoader（名前空間）](#5b-meshloader名前空間)
 6. [SPHParams（構造体）](#6-sphparams構造体)
 7. [SPH](#7-sph)
 8. [FluidRenderer](#8-fluidrenderer)
@@ -143,12 +144,24 @@ DirectX 11 による「山から粒子が落ちる」SPH 流体シミュレー�
 
 | 関数 | 引数 | 戻り値 | 説明 |
 |---|---|---|---|
-| `bool Initialize(Graphics& gfx)` | `gfx` | 成功で `true` | 高さマップ生成 → メッシュ作成 → 岩テクスチャ準備（画像読み込み、失敗時はノイズ生成）→ `Terrain.hlsl` コンパイル。 |
+| `bool Initialize(Graphics& gfx)` | `gfx` | 成功で `true` | `assets/terrain.obj` があれば `LoadMeshTerrain`、なければ高さマップ生成 → メッシュ作成。続けて岩テクスチャ準備（画像読み込み、失敗時はノイズ生成）→ `Terrain.hlsl` コンパイル。 |
 | `void Render(Graphics& gfx)` | `gfx` | — | 地形を `DrawIndexed`。前提: `b0` の定数バッファが設定済み。副作用: IA/VS/PS/RS/OM ステートを地形用に変更、`t0`/`s0` に岩テクスチャ/サンプラーをバインド。 |
 | `float GetHeight(float x, float z) const` | ワールド座標（範囲外は端にクランプ） | 地面の高さ y | 高さマップの双線形補間。スレッドセーフ（読み取りのみ）。 |
 | `XMFLOAT3 GetNormal(float x, float z) const` | ワールド座標 | 上向き単位法線 | 中心差分 `normalize(-∂h/∂x, 1, -∂h/∂z)`。 |
 | `static float ValleyCenterX(float z)` | `z` | 谷の中心の x | `4 sin(0.16 z) + 2 sin(0.41 z + 1.7)`。エミッタ位置の決定にも使用。 |
 | `bool IsTextureFromFile() const` | — | `true` = 画像ファイル由来 | 岩テクスチャの出所（タイトル表示用）。 |
+| `bool IsMeshFromFile() const` | — | `true` = OBJ 由来 | 地形の出所（タイトル表示用）。 |
+| `float GetValleyCenterX(float z) const` | `z` | 谷の中心の x | 手続き生成なら `ValleyCenterX(z)`、OBJ 地形ならその z の行で最も低い x（端 1 m を除く）。エミッタが使用。 |
+| `static constexpr const wchar_t* TERRAIN_MESH_FILE` | — | `"terrain.obj"` | `assets` 内で探す地形メッシュ名。 |
+
+### 5.2.2 OBJ 地形の取り込み（`LoadMeshTerrain`、内部）
+
+1. `MeshLoader::LoadObj` で読み込み（失敗なら `false` → 手続き生成へ）
+2. 右手系 → 左手系: 位置と法線の x を反転
+3. 自動フィット: xz の大きい方の辺が `WORLD_SIZE × 0.999` になる一様スケール、バウンディングボックス中心を原点へ（y も同倍率）
+4. 巻き順統一: 各三角形の `cross(e1, e2).y < 0` なら頂点 1, 2 を入れ替え（上を向く面が表）
+5. `BakeHeightMap`: 三角形を xz に投影し、内部の格子点で重心座標から y を補間、最大値を採用。未被覆の格子点は 4 近傍平均で反復的に穴埋め
+6. UV が無ければ `(x, z) × 0.12` を生成し、`CreateGpuBuffers` で IMMUTABLE バッファ化
 | `static constexpr const wchar_t* ROCK_TEXTURE_FILES[]` | — | `{ "rock.png", "rock.jpg", "rock.jpeg", "rock.bmp" }` | `assets` 内でこの順に探す。 |
 
 ### 5.2.1 岩テクスチャの取得（`CreateRockTexture`、内部）
@@ -194,6 +207,21 @@ h(x, z)  = base + floorU + mountain + rough + ridge
 | `bool CreateFromPixels(Graphics& gfx, const void* pixels, UINT width, UINT height, ComPtr<ID3D11ShaderResourceView>& outSRV)` | `pixels`: RGBA8（行ピッチ = `width*4`） | 成功で `true` | `MipLevels=0` + `GENERATE_MIPS` でテクスチャ作成、レベル 0 に `UpdateSubresource`、`GenerateMips`。 |
 
 内部: `GetWICFactory()` が `CoInitializeEx(COINIT_MULTITHREADED)` を呼び `IWICImagingFactory` を静的に 1 回だけ生成。
+
+---
+
+## 5B. MeshLoader（名前空間）
+
+ファイル: `src/MeshLoader.h`, `src/MeshLoader.cpp`
+役割: Wavefront OBJ の読み込み。外部ライブラリ不要。
+
+| 型 / 関数 | 内容 |
+|---|---|
+| `struct MeshVertex { XMFLOAT3 pos; XMFLOAT3 normal; XMFLOAT2 uv; }` | 1 頂点 |
+| `struct MeshData { vertices, indices, boundsMin, boundsMax, hasNormals, hasUVs }` | 三角形リスト（`indices` は 3 個で 1 三角形） |
+| `bool LoadObj(const std::wstring& path, MeshData& out, std::string* errorMsg = nullptr)` | `v / vt / vn / f` を解釈。`f` は `a`, `a/b`, `a//c`, `a/b/c` と負の相対インデックスに対応、多角形は扇状に三角形化。`(v,vt,vn)` の組ごとに頂点を共有。`vt` の v は `1 - v` に反転（OBJ は下原点、D3D は上原点）。`vn` が無ければ `ComputeSmoothNormals`。面が無ければ `false`。 |
+| `void ComputeSmoothNormals(MeshData&)` | 面法線（面積重み付き）を頂点に累積して正規化 |
+| `void ComputeBounds(MeshData&)` | バウンディングボックス計算 |
 
 ---
 
@@ -251,7 +279,7 @@ h(x, z)  = base + floorU + mountain + rough + ridge
 
 | 順 | 関数 | 並列 | 内容 |
 |---|---|---|---|
-| 1 | `Emit(dt)` / `EmitSheet()` | — | タイマーが `spacing/emitSpeed` を超えるごとに `emitWidth × emitHeight` の板を上流に配置（ジッタ付き） |
+| 1 | `Emit(dt)` / `EmitSheet()` | — | タイマーが `spacing/emitSpeed` を超えるごとに `emitWidth × emitHeight` の板を上流 `z = emitZ`、`x = Terrain::GetValleyCenterX(emitZ)` に配置（ジッタ付き） |
 | 2 | `BuildGrid()` | 一部 | セル座標 `floor(p/h)`、ハッシュ `(cx·73856093 ^ cy·19349663 ^ cz·83492791) & mask`、カウンティングソートで `cellStart`/`sorted` を構築 |
 | 3 | `BuildNeighborLists()` | ○ | 周囲 27 セルを走査し `r² < h²` の粒子を最大 `maxNeighbors` 個記録（セル座標一致でハッシュ衝突を除外） |
 | 4 | `ComputeDensityPressure()` | ○ | `ρ_i = Σ m W_poly6`, `p_i = k·max(ρ_i-ρ0, 0)` |

@@ -5,6 +5,7 @@
 #include "Terrain.h"
 #include "Noise.h"
 #include "TextureLoader.h"
+#include "MeshLoader.h"
 #include <algorithm>
 #include <cmath>
 
@@ -87,8 +88,13 @@ float Terrain::HeightFunction(float x, float z)
 //-----------------------------------------------------------------------------
 bool Terrain::Initialize(Graphics& gfx)
 {
-    BuildHeightMap();
-    if (!BuildMesh(gfx))          return false;
+    // A. OBJ メッシュがあればそれを使う / B. なければ手続き生成
+    if (!LoadMeshTerrain(gfx))
+    {
+        m_meshFromFile = false;
+        BuildHeightMap();
+        if (!BuildMesh(gfx))      return false;
+    }
     if (!CreateRockTexture(gfx))  return false;
     if (!CreateShaders(gfx))      return false;
     return true;
@@ -205,15 +211,23 @@ bool Terrain::BuildMesh(Graphics& gfx)
             indices.push_back(i00); indices.push_back(i01); indices.push_back(i11);
         }
     }
+    return CreateGpuBuffers(gfx, vertices, indices);
+}
+
+//-----------------------------------------------------------------------------
+// CreateGpuBuffers
+//-----------------------------------------------------------------------------
+bool Terrain::CreateGpuBuffers(Graphics& gfx, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
+{
     m_indexCount = static_cast<UINT>(indices.size());
 
-    // ---- GPU バッファ作成 (IMMUTABLE: 作成後に変更しない) ----
+    // IMMUTABLE: 作成後に変更しない (GPU 側で最も高速に扱える)
     D3D11_BUFFER_DESC vbd = {};
     vbd.ByteWidth = static_cast<UINT>(vertices.size() * sizeof(Vertex));
     vbd.Usage     = D3D11_USAGE_IMMUTABLE;
     vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA vinit = { vertices.data(), 0, 0 };
-    if (FAILED(gfx.GetDevice()->CreateBuffer(&vbd, &vinit, m_vertexBuffer.GetAddressOf())))
+    if (FAILED(gfx.GetDevice()->CreateBuffer(&vbd, &vinit, m_vertexBuffer.ReleaseAndGetAddressOf())))
         return false;
 
     D3D11_BUFFER_DESC ibd = {};
@@ -221,10 +235,196 @@ bool Terrain::BuildMesh(Graphics& gfx)
     ibd.Usage     = D3D11_USAGE_IMMUTABLE;
     ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
     D3D11_SUBRESOURCE_DATA iinit = { indices.data(), 0, 0 };
-    if (FAILED(gfx.GetDevice()->CreateBuffer(&ibd, &iinit, m_indexBuffer.GetAddressOf())))
+    if (FAILED(gfx.GetDevice()->CreateBuffer(&ibd, &iinit, m_indexBuffer.ReleaseAndGetAddressOf())))
         return false;
 
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// LoadMeshTerrain
+//-----------------------------------------------------------------------------
+bool Terrain::LoadMeshTerrain(Graphics& gfx)
+{
+    MeshLoader::MeshData mesh;
+    if (!MeshLoader::LoadObj(Graphics::AssetPath(TERRAIN_MESH_FILE), mesh))
+        return false;
+
+    // ---- 1. 右手系 (Blender/OBJ) → 左手系 (DirectX): x を反転 ----
+    for (auto& v : mesh.vertices)
+    {
+        v.pos.x    = -v.pos.x;
+        v.normal.x = -v.normal.x;
+    }
+    MeshLoader::ComputeBounds(mesh);
+
+    // ---- 2. 自動フィット: xz の大きい方の辺を WORLD_SIZE に、中心を原点に ----
+    const XMFLOAT3& mn = mesh.boundsMin;
+    const XMFLOAT3& mx = mesh.boundsMax;
+    const float extent = std::max(mx.x - mn.x, mx.z - mn.z);
+    if (extent < 1e-6f)
+        return false;
+    const float scale = (WORLD_SIZE * 0.999f) / extent;   // 端が格子の外に出ないよう僅かに縮める
+    const XMFLOAT3 center((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+    for (auto& v : mesh.vertices)
+    {
+        v.pos.x = (v.pos.x - center.x) * scale;
+        v.pos.y = (v.pos.y - center.y) * scale;
+        v.pos.z = (v.pos.z - center.z) * scale;
+    }
+
+    // ---- 3. 三角形の巻き順を統一 ----
+    //   左手系 + D3D 既定 (時計回りが表面) では、上を向く面は cross(e1, e2).y > 0 になる
+    //   (BuildMesh と同じ規約)。地形は上から見える面が表なので、下向きなら順序を入れ替える。
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+    {
+        const XMFLOAT3& p0 = mesh.vertices[mesh.indices[i]].pos;
+        const XMFLOAT3& p1 = mesh.vertices[mesh.indices[i + 1]].pos;
+        const XMFLOAT3& p2 = mesh.vertices[mesh.indices[i + 2]].pos;
+        const float e1x = p1.x - p0.x, e1z = p1.z - p0.z;
+        const float e2x = p2.x - p0.x, e2z = p2.z - p0.z;
+        const float crossY = e1z * e2x - e1x * e2z;   // cross(e1, e2).y
+        if (crossY < 0.0f)
+            std::swap(mesh.indices[i + 1], mesh.indices[i + 2]);
+    }
+
+    // ---- 4. 衝突判定用の高さマップに焼き込む ----
+    BakeHeightMap(mesh);
+
+    // ---- 5. 描画用頂点 (UV が無ければワールド座標から生成) ----
+    std::vector<Vertex> vertices(mesh.vertices.size());
+    const float uvScale = 0.12f;
+    for (size_t i = 0; i < mesh.vertices.size(); ++i)
+    {
+        const MeshLoader::MeshVertex& mv = mesh.vertices[i];
+        vertices[i].pos    = mv.pos;
+        vertices[i].normal = mv.normal;
+        vertices[i].uv     = mesh.hasUVs ? mv.uv : XMFLOAT2(mv.pos.x * uvScale, mv.pos.z * uvScale);
+    }
+    if (!CreateGpuBuffers(gfx, vertices, mesh.indices))
+        return false;
+
+    m_meshFromFile = true;
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+// BakeHeightMap
+//   アルゴリズム (三角形ごと):
+//     1. xz 平面での包含格子範囲 [ix0, ix1] × [iz0, iz1] を求める
+//     2. 各格子点 (x, z) について辺関数 (エッジ関数) で重心座標 (w0, w1, w2) を計算
+//     3. すべて ≥ 0 (三角形の内側) なら y = w0 y0 + w1 y1 + w2 y2 を高さ候補にする
+//     4. 候補が既存値より高ければ採用 (オーバーハングは上面のみ残る)
+//   穴埋め: 覆われなかった格子点は、覆われた 4 近傍の平均で埋める処理を
+//           全て埋まるまで繰り返す (最大 GRID_N 回)。
+//-----------------------------------------------------------------------------
+void Terrain::BakeHeightMap(const MeshLoader::MeshData& mesh)
+{
+    const float UNSET = -1e30f;   // 未設定を表す番兵
+    m_heights.assign(static_cast<size_t>(GRID_N) * GRID_N, UNSET);
+
+    // ワールド x → 格子添え字 (小数)
+    auto toGrid = [this](float w) { return (w + HALF_SIZE) / m_cellSize; };
+
+    for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3)
+    {
+        const XMFLOAT3& p0 = mesh.vertices[mesh.indices[t]].pos;
+        const XMFLOAT3& p1 = mesh.vertices[mesh.indices[t + 1]].pos;
+        const XMFLOAT3& p2 = mesh.vertices[mesh.indices[t + 2]].pos;
+
+        // 1. 包含格子範囲
+        const float gx0 = toGrid(p0.x), gz0 = toGrid(p0.z);
+        const float gx1 = toGrid(p1.x), gz1 = toGrid(p1.z);
+        const float gx2 = toGrid(p2.x), gz2 = toGrid(p2.z);
+        const int ix0 = std::max(0, static_cast<int>(std::floor(std::min({ gx0, gx1, gx2 }))));
+        const int ix1 = std::min(GRID_N - 1, static_cast<int>(std::ceil(std::max({ gx0, gx1, gx2 }))));
+        const int iz0 = std::max(0, static_cast<int>(std::floor(std::min({ gz0, gz1, gz2 }))));
+        const int iz1 = std::min(GRID_N - 1, static_cast<int>(std::ceil(std::max({ gz0, gz1, gz2 }))));
+
+        // 三角形の xz 面積の 2 倍 (0 なら真横から見た縮退三角形なので無視)
+        const float area = (gx1 - gx0) * (gz2 - gz0) - (gx2 - gx0) * (gz1 - gz0);
+        if (std::fabs(area) < 1e-9f)
+            continue;
+        const float invArea = 1.0f / area;
+
+        for (int iz = iz0; iz <= iz1; ++iz)
+        {
+            for (int ix = ix0; ix <= ix1; ++ix)
+            {
+                const float px = static_cast<float>(ix);
+                const float pz = static_cast<float>(iz);
+                // 2. 重心座標 (辺関数 / 面積)
+                const float w0 = ((gx1 - px) * (gz2 - pz) - (gx2 - px) * (gz1 - pz)) * invArea;
+                const float w1 = ((gx2 - px) * (gz0 - pz) - (gx0 - px) * (gz2 - pz)) * invArea;
+                const float w2 = 1.0f - w0 - w1;
+                const float eps = -1e-4f;   // 辺上の格子点も含めるための許容誤差
+                if (w0 < eps || w1 < eps || w2 < eps)
+                    continue;
+                // 3-4. 高さを補間し、より高ければ採用
+                const float y = w0 * p0.y + w1 * p1.y + w2 * p2.y;
+                float& h = m_heights[static_cast<size_t>(iz) * GRID_N + ix];
+                if (y > h)
+                    h = y;
+            }
+        }
+    }
+
+    // 穴埋め (覆われなかった格子点を隣接点の平均で埋める)
+    std::vector<float> next(m_heights.size());
+    for (int iter = 0; iter < GRID_N; ++iter)
+    {
+        bool anyUnset = false;
+        next = m_heights;
+        for (int iz = 0; iz < GRID_N; ++iz)
+        {
+            for (int ix = 0; ix < GRID_N; ++ix)
+            {
+                const size_t idx = static_cast<size_t>(iz) * GRID_N + ix;
+                if (m_heights[idx] != UNSET)
+                    continue;
+                float sum = 0.0f;
+                int count = 0;
+                const int nx[4] = { ix - 1, ix + 1, ix, ix };
+                const int nz[4] = { iz, iz, iz - 1, iz + 1 };
+                for (int k = 0; k < 4; ++k)
+                {
+                    if (nx[k] < 0 || nx[k] >= GRID_N || nz[k] < 0 || nz[k] >= GRID_N)
+                        continue;
+                    const float hn = m_heights[static_cast<size_t>(nz[k]) * GRID_N + nx[k]];
+                    if (hn != UNSET) { sum += hn; ++count; }
+                }
+                if (count > 0)
+                    next[idx] = sum / count;
+                else
+                    anyUnset = true;
+            }
+        }
+        m_heights.swap(next);
+        if (!anyUnset)
+            break;
+    }
+    // メッシュが空などで最後まで埋まらなかった格子点は 0 にする
+    for (float& h : m_heights)
+        if (h == UNSET) h = 0.0f;
+}
+
+//-----------------------------------------------------------------------------
+// GetValleyCenterX
+//-----------------------------------------------------------------------------
+float Terrain::GetValleyCenterX(float z) const
+{
+    if (!m_meshFromFile)
+        return ValleyCenterX(z);
+
+    // OBJ 地形: この z の行で最も低い x を探す (端 1 m は除外)
+    float bestX = 0.0f;
+    float bestH = 1e30f;
+    for (float x = -HALF_SIZE + 1.0f; x <= HALF_SIZE - 1.0f; x += m_cellSize)
+    {
+        const float h = GetHeight(x, z);
+        if (h < bestH) { bestH = h; bestX = x; }
+    }
+    return bestX;
 }
 
 //-----------------------------------------------------------------------------

@@ -16,6 +16,7 @@ graph TB
         TER[Terrain<br/>地形 / 高さマップ]
         NOISE[Noise<br/>パーリンノイズ]
         TL[TextureLoader<br/>WIC 画像読み込み]
+        ML[MeshLoader<br/>OBJ 読み込み]
     end
 
     subgraph Render["描画"]
@@ -42,6 +43,7 @@ graph TB
     TER --> NOISE
     TER -->|岩テクスチャ生成 フォールバック| NOISE
     TER -->|assets/rock.png| TL
+    TER -->|assets/terrain.obj| ML
     CAM -->|View / Proj| CB
     CB --> HC
     TER --> GFX
@@ -64,7 +66,12 @@ flowchart TD
     FSD -->|見つかった| GI[Graphics::Initialize<br/>デバイス / スワップチェーン / RTV / DSV / ステート]
     GI --> CBUF[CreateConstantBuffer<br/>FrameConstants]
     CBUF --> TI[Terrain::Initialize]
-    TI --> TI1[BuildHeightMap<br/>257x257 で HeightFunction 評価]
+    TI --> TM{assets/terrain.obj<br/>MeshLoader::LoadObj}
+    TM -->|読み込み成功| TM1[x 反転 右手系→左手系<br/>自動フィット 60 m<br/>巻き順統一]
+    TM1 --> TM2[BakeHeightMap<br/>三角形を真上から高さマップに焼き込み<br/>穴埋め]
+    TM2 --> TM3[CreateGpuBuffers<br/>OBJ の頂点 / 法線 / UV]
+    TM3 --> TI3
+    TM -->|ファイルなし / 失敗| TI1[BuildHeightMap<br/>257x257 で HeightFunction 評価]
     TI1 --> TI2[BuildMesh<br/>頂点 / 法線 / UV / インデックス]
     TI2 --> TI3{CreateRockTexture<br/>assets/rock.png 等を<br/>TextureLoader::LoadFromFile}
     TI3 -->|読み込み成功| TI3B[画像テクスチャ + GenerateMips]
@@ -239,6 +246,7 @@ graph LR
     end
     subgraph Disk
         IMG[assets/rock.png]
+        OBJ[assets/terrain.obj]
         SB[StructuredBuffer float4<br/>DYNAMIC]
         CB[cbuffer b0<br/>DYNAMIC]
         DT0[depthTex 0<br/>R32_FLOAT]
@@ -247,6 +255,8 @@ graph LR
         DS[深度バッファ<br/>D24S8]
     end
     IMG -->|起動時 1 回 WIC| TX
+    OBJ -->|起動時 1 回 OBJ 解析| VB
+    OBJ -->|BakeHeightMap| HM
     HM -->|起動時 1 回| VB
     HM -->|GetHeight/GetNormal| PD
     PD -->|GetRenderData| RD

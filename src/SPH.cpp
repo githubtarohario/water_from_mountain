@@ -150,7 +150,7 @@ void SPH::EmitSheet()
 {
     const float s  = m_params.particleSpacing;
     const float z  = m_params.emitZ;
-    const float cx = Terrain::ValleyCenterX(z);
+    const float cx = m_terrain->GetValleyCenterX(z);
 
     for (int iy = 0; iy < m_params.emitHeight; ++iy)
     {

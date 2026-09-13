@@ -172,10 +172,11 @@ namespace
     void UpdateTitle(HWND hWnd)
     {
         wchar_t buf[256];
-        swprintf_s(buf, L"山から粒子が落ちる SPH  |  粒子: %d  FPS: %.0f  モード: %s%s  テクスチャ: %s  |  [1]粒子 [2]表面 [Space]停止 [R]リセット",
+        swprintf_s(buf, L"山から粒子が落ちる SPH  |  粒子: %d  FPS: %.0f  モード: %s%s  地形: %s  テクスチャ: %s  |  [1]粒子 [2]表面 [Space]停止 [R]リセット",
             g_app.sph.GetParticleCount(), g_app.fps,
             g_app.mode == FluidRenderMode::Particles ? L"粒子" : L"表面生成",
             g_app.paused ? L" (一時停止)" : L"",
+            g_app.terrain.IsMeshFromFile() ? L"OBJ" : L"生成",
             g_app.terrain.IsTextureFromFile() ? L"画像" : L"ノイズ生成");
         SetWindowTextW(hWnd, buf);
     }
