@@ -290,9 +290,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
     wc.lpszClassName = L"MountainParticlesWindow";
     RegisterClassExW(&wc);
 
-    // ---- ウィンドウ作成 (クライアント領域が 1280x800 になるよう調整) ----
-    const int clientW = 1280;
-    const int clientH = 800;
+    // ---- ウィンドウ作成 (クライアント領域が 1800x1100 になるよう調整。画面に収まらなければ縮める) ----
+    int clientW = 1800;
+    int clientH = 1100;
+    {
+        const int screenW = GetSystemMetrics(SM_CXSCREEN);
+        const int screenH = GetSystemMetrics(SM_CYSCREEN);
+        if (clientW > screenW - 80)  clientW = screenW - 80;
+        if (clientH > screenH - 160) clientH = screenH - 160;
+    }
     RECT rc = { 0, 0, clientW, clientH };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
 

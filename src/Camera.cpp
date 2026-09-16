@@ -14,10 +14,10 @@ using namespace DirectX;
 //   参考動画と同じく、水が奥から手前へ流れてくるように見える。
 //-----------------------------------------------------------------------------
 Camera::Camera()
-    : m_target(0.0f, 0.0f, -3.0f)
+    : m_target(0.0f, 1.0f, -2.0f)
     , m_yaw(0.0f)
-    , m_pitch(XMConvertToRadians(34.0f))
-    , m_distance(42.0f)
+    , m_pitch(XMConvertToRadians(32.0f))
+    , m_distance(33.0f)
     , m_fovY(XMConvertToRadians(45.0f))
     , m_nearZ(0.5f)
     , m_farZ(400.0f)
