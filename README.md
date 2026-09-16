@@ -43,10 +43,16 @@ run.bat        … 起動
 ### 実在の地形を使う（国土地理院 標高タイル）
 
 `tools/fetch_gsi_terrain.py` で国土地理院の標高タイル（DEM10B, 10 m メッシュ）をダウンロードし、実在の地形を `assets/terrain.obj` にできます。
-同梱の `assets/terrain.obj` は岐阜県関ヶ原周辺 6 km 四方（高さ 2 倍に誇張）で、`assets/terrain.cfg` で投入位置を北側斜面の谷に指定しています。
+同梱の `assets/terrain.obj` は **富士山**（山頂中心 8 km 四方、誇張なし）で、`assets/terrain.cfg` で投入位置を南斜面の山頂直下に指定しています。
+関ヶ原の地形は `assets/terrain_sekigahara.obj` / `.cfg` に保存してあり、`terrain.obj` / `terrain.cfg` にコピーすれば切り替わります。
+
+プリセットは `tools	errain_presets.bat` にまとめてあります（使いたい行の `rem` を外して実行）:
 
 ```
-python tools/fetch_gsi_terrain.py --lat 35.362 --lon 136.472 --size 6 --exaggeration 2.0 --emit-lat 35.384 --emit-lon 136.470
+rem 富士山
+python toolsetch_gsi_terrain.py --lat 35.3606 --lon 138.7274 --size 8 --exaggeration 1.0 --emit-lat 35.355 --emit-lon 138.729
+rem 関ヶ原
+rem python toolsetch_gsi_terrain.py --lat 35.362 --lon 136.472 --size 6 --exaggeration 2.0 --emit-lat 35.384 --emit-lon 136.470
 ```
 
 - `--lat/--lon`: 中心、`--size`: 一辺 [km]、`--exaggeration`: 高さの誇張倍率（xz は 60 m に縮小されるので 2〜3 倍が見やすい）
@@ -96,13 +102,15 @@ shaders/
   FluidSurface.hlsl  深度のバイラテラルぼかし、法線復元と水面の合成
 assets/
   rock.png           岩テクスチャ (差し替え可能)
-  terrain.obj        地形メッシュ (差し替え可能。無ければ手続き生成。同梱は関ヶ原の実地形)
+  terrain.obj        地形メッシュ (差し替え可能。無ければ手続き生成。同梱は富士山の実地形)
+  terrain_sekigahara.obj/.cfg  関ヶ原の実地形 (terrain.obj/.cfg にコピーして使う)
   terrain.cfg        粒子の投入位置 (emit_x / emit_z)。無ければ自動
   terrain_test_valley.obj  試作用の谷 (Blender なしで生成したもの)
 tools/
   blender_export_valley.py  Blender で試作用の谷を作って OBJ 出力するスクリプト
   make_test_valley.py       同じ谷を Blender なしで OBJ 出力するスクリプト
   fetch_gsi_terrain.py      国土地理院の標高タイルから実在の地形を OBJ 出力するスクリプト
+  terrain_presets.bat       地形プリセット (富士山 / 関ヶ原 / 試作の谷)
 ```
 
 ## ドキュメント
