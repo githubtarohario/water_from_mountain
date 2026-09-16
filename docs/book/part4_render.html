@@ -151,6 +151,27 @@
 <p>実行ファイルの場所は、Visual Studio から実行するときと <code>bin\</code> から直接起動するときで異なります。シェーダーやアセットは「カレントディレクトリ → exe の場所 → その親 → さらに親」の順に探し、どこから起動しても見つかるようにしています。</p>
 {{CODE:src/main.cpp:    bool FindProjectDirectories():    }}}
 
+<h2>16.4 処理の流れを図で読む</h2>
+<p>ここまでに登場したモジュールがどう結び付いているかを、3 種類の図で俯瞰します。同じプログラムでも、着目点（呼び出し関係・時間順・データの所在）によって適した図が異なります。</p>
+<h3>呼び出しツリー図 — どの関数が何を呼ぶか</h3>
+<p>wWinMain から始まる関数の呼び出しを木構造で並べたものです。上から下が実行順、右にいくほど深い呼び出しで、‖ は OpenMP で並列化された段を表します。</p>
+{{SVG_CALLTREE_INIT}}
+{{SVG_CALLTREE_FRAME}}
+<h3>シーケンス図 — 誰が誰をいつ呼ぶか</h3>
+<p>縦軸が時間、縦の破線が各モジュール（ライフライン）です。実線の矢印が呼び出し、破線が戻り値、枠は loop（繰り返し）/ alt（分岐）/ opt（条件付き）を表します。1 フレームの中で、物理（SPH）→ 定数バッファ → 地形描画 → 粒子描画 → Present の順に GPU へ命令が流れていくことが読み取れます。</p>
+{{SVG_SEQ_INIT}}
+{{SVG_SEQ_FRAME}}
+<h3>データフロー図 — どのデータがどこにあるか</h3>
+<p>処理（四角）とデータ（円筒 = CPU メモリ、橙 = GPU リソース）を CPU / GPU のレーンに分けて配置し、データの移動を矢印で示します。レーンの境界を越える矢印が「CPU → GPU 転送」で、起動時 1 回のもの（頂点・テクスチャ）と毎フレームのもの（定数バッファ・粒子バッファ）を区別しています。</p>
+{{SVG_DATAFLOW}}
+<table>
+  <tr><th style="width:30%">転送</th><th style="width:22%">頻度</th><th>内容</th></tr>
+  <tr><td>頂点 / インデックス / 岩テクスチャ</td><td>起動時 1 回</td><td>IMMUTABLE バッファ、ミップマップ付きテクスチャ</td></tr>
+  <tr><td>cbuffer b0（FrameConstants）</td><td>毎フレーム（+ パスごと）</td><td>View / Proj / ViewProj（転置済み）、光源、画面サイズ、粒子半径、ぼかし方向 — 320 B</td></tr>
+  <tr><td>StructuredBuffer 粒子</td><td>毎フレーム</td><td>(x, y, z, 速さ) × 最大 12,000 = 192 KB。Map(WRITE_DISCARD)</td></tr>
+  <tr><td>depthTex 0 ⇄ 1</td><td>表面モードのみ、GPU 内</td><td>ビュー空間深度。深度パス → ぼかし 8 パス → 合成の入力</td></tr>
+</table>
+
 <div class="exercise"><b>演習 16</b>
 <ol>
   <li>キー <code>3</code> で「粒子と表面を同時に描く」モードを追加してみましょう（<code>FluidRenderer::Render</code> を 2 回呼ぶ）。</li>

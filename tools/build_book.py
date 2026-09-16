@@ -144,7 +144,20 @@ def svg_bilateral():
     s += f'<text x="{x0+260}" y="{y0+34}" font-size="10" fill="#555">σd = 1.5 m。深度 0 (流体外) は重み 0 にする</text>'
     return fig(s, '図 15-2 バイラテラルフィルタの 2 つの重み。両方の積が最終的な重みになる', 520, 180)
 
-SVGS = {'FADE': svg_fade, 'FBM': svg_fbm, 'VALLEY_PROFILE': svg_valley_profile, 'KERNELS': svg_kernels, 'JET': svg_jet, 'BILATERAL': svg_bilateral}
+# 処理の流れ図 (呼び出しツリー / シーケンス / データフロー) は build_structure_diagrams.py から借りる
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_structure_diagrams as sd
+def _wrap(svg, cap):
+    return f'<div class="fig">{svg}<div class="cap">{cap}</div></div>'
+def svg_calltree_init():  return _wrap(sd.call_tree(sd.TREE_INIT, '呼び出しツリー: wWinMain (初期化)'), '図 16-1 起動と初期化の呼び出しツリー')
+def svg_calltree_frame(): return _wrap(sd.call_tree(sd.TREE_FRAME, '呼び出しツリー: メインループ 1 回転'), '図 16-2 メインループ 1 回転の呼び出しツリー')
+def svg_seq_init():       return _wrap(sd.seq_init(), '図 16-3 起動と初期化のシーケンス図')
+def svg_seq_frame():      return _wrap(sd.seq_frame(), '図 16-4 メインループ 1 フレームのシーケンス図')
+def svg_dataflow():       return _wrap(sd.dataflow(), '図 16-5 データフロー図（上段 CPU、下段 GPU）')
+
+SVGS = {'CALLTREE_INIT': svg_calltree_init, 'CALLTREE_FRAME': svg_calltree_frame, 'SEQ_INIT': svg_seq_init,
+        'SEQ_FRAME': svg_seq_frame, 'DATAFLOW': svg_dataflow,
+        'FADE': svg_fade, 'FBM': svg_fbm, 'VALLEY_PROFILE': svg_valley_profile, 'KERNELS': svg_kernels, 'JET': svg_jet, 'BILATERAL': svg_bilateral}
 
 # ---------------------------------------------------------------- 画像
 def img_data(name, width=900, crop_title=False):
