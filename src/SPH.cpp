@@ -149,8 +149,8 @@ void SPH::Emit(float dt)
 void SPH::EmitSheet()
 {
     const float s  = m_params.particleSpacing;
-    const float z  = m_params.emitZ;
-    const float cx = m_terrain->GetValleyCenterX(z);
+    float cx, z;
+    m_terrain->GetEmitPoint(m_params.emitZ, cx, z);   // 投入位置 (terrain.cfg の指定 or 谷底の自動検出)
 
     for (int iy = 0; iy < m_params.emitHeight; ++iy)
     {
@@ -455,8 +455,8 @@ void SPH::Integrate()
 //-----------------------------------------------------------------------------
 // ResolveCollision
 //   アルゴリズム:
-//     1. 側壁 (x = ±limit) と上流の壁 (z = -limit) を越えたら壁面に戻し、
-//        壁に向かう速度成分を 0 にする
+//     1. 上流の壁 (z = -limit) を越えたら壁面に戻し、壁に向かう速度成分を 0 にする
+//        (左右と下流は壁ではなく排水口: RemoveDrained で消去)
 //     2. 地形: 粒子の中心が「地面の高さ + 粒子半径」より低ければ
 //        その高さまで持ち上げ、地面法線 n に対して
 //          v ← v - (1 + e)(v・n) n   (v・n < 0 のときのみ)
@@ -475,9 +475,9 @@ void SPH::ResolveCollision(int i)
     const float radius = m_params.particleSpacing * 0.5f;
     const float limit  = Terrain::HALF_SIZE - 0.5f;
 
-    // 1. 側壁・上流の壁
-    if (p.x < -limit) { p.x = -limit; if (v.x < 0.0f) v.x = 0.0f; }
-    if (p.x >  limit) { p.x =  limit; if (v.x > 0.0f) v.x = 0.0f; }
+    // 1. 上流の壁 (z = -limit) のみ壁にする。左右 (x) と下流 (z = +limit) は
+    //    RemoveDrained で「範囲外に流れ出た粒子」として消去する (実在地形では
+    //    どの辺からも水が流れ出るため)
     if (p.z < -limit) { p.z = -limit; if (v.z < 0.0f) v.z = 0.0f; }
 
     // 2. 地形
@@ -518,6 +518,7 @@ void SPH::ResolveCollision(int i)
 
 //-----------------------------------------------------------------------------
 // RemoveDrained
+//   下流端 (z > limit) または左右端 (|x| > limit) から流れ出た粒子を消す。
 //   有効粒子は配列の先頭に詰めて管理しているので、
 //   消す粒子を末尾の粒子で上書きし m_count を 1 減らす (順序は保たれなくてよい)。
 //-----------------------------------------------------------------------------
@@ -528,7 +529,7 @@ void SPH::RemoveDrained()
     while (i < m_count)
     {
         const XMFLOAT3& p = m_pos[i];
-        const bool drained = (p.z > drainZ) || (p.y < -60.0f);
+        const bool drained = (p.z > drainZ) || (p.x < -drainZ) || (p.x > drainZ) || (p.y < -60.0f);
         if (drained)
         {
             const int last = m_count - 1;

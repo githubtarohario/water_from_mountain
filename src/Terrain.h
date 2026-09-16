@@ -85,6 +85,17 @@ public:
     float GetValleyCenterX(float z) const;
 
     //-------------------------------------------------------------------------
+    // 関数名 : GetEmitPoint
+    // 概要   : 粒子の投入位置 (x, z) を返す。
+    //          assets/terrain.cfg に emit_x / emit_z があればそれを使い、
+    //          なければ z = defaultZ の行で最も低い x (GetValleyCenterX) を使う。
+    // 引数   : defaultZ : 既定の投入 z (SPHParams::emitZ)
+    //          outX, outZ : [出力] 投入位置
+    // 戻り値 : なし
+    //-------------------------------------------------------------------------
+    void GetEmitPoint(float defaultZ, float& outX, float& outZ) const;
+
+    //-------------------------------------------------------------------------
     // 関数名 : IsMeshFromFile
     // 概要   : 地形が OBJ ファイルから読み込まれたかを返す (タイトル表示用)
     // 引数   : なし
@@ -201,6 +212,18 @@ private:
     ComPtr<ID3D11ShaderResourceView>  m_rockTexSRV;    // 岩テクスチャのビュー
     bool                              m_textureFromFile = false;   // true = 画像ファイル由来, false = 手続き生成
     bool                              m_meshFromFile = false;      // true = OBJ 由来, false = 手続き生成
+    bool                              m_hasEmitOverride = false;   // terrain.cfg で投入位置が指定されたか
+    float                             m_emitX = 0.0f;              // 指定された投入位置 x (ワールド座標)
+    float                             m_emitZ = 0.0f;              // 指定された投入位置 z
+
+    //-------------------------------------------------------------------------
+    // 関数名 : LoadTerrainConfig
+    // 概要   : assets/terrain.cfg (key=value 形式) を読み、投入位置の指定を取り込む
+    //          対応キー: emit_x, emit_z  (プログラム内のワールド座標 [m], -30～30)
+    // 引数   : なし
+    // 戻り値 : なし (ファイルがなければ何もしない)
+    //-------------------------------------------------------------------------
+    void LoadTerrainConfig();
 
 public:
     // 岩テクスチャとして探す画像ファイル名 (assets フォルダ内、先頭から順に試す)

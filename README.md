@@ -40,6 +40,22 @@ run.bat        … 起動
 内部では、メッシュはそのまま描画に使い、衝突判定用には真上から見た高さを 257×257 の高さマップに焼き込んでいます。
 そのため SPH 側の変更なしに任意形状の地形を使えますが、オーバーハング（ひさし）の下面は無視されます。
 
+### 実在の地形を使う（国土地理院 標高タイル）
+
+`tools/fetch_gsi_terrain.py` で国土地理院の標高タイル（DEM10B, 10 m メッシュ）をダウンロードし、実在の地形を `assets/terrain.obj` にできます。
+同梱の `assets/terrain.obj` は岐阜県関ヶ原周辺 6 km 四方（高さ 2 倍に誇張）で、`assets/terrain.cfg` で投入位置を北側斜面の谷に指定しています。
+
+```
+python tools/fetch_gsi_terrain.py --lat 35.362 --lon 136.472 --size 6 --exaggeration 2.0 --emit-lat 35.384 --emit-lon 136.470
+```
+
+- `--lat/--lon`: 中心、`--size`: 一辺 [km]、`--exaggeration`: 高さの誇張倍率（xz は 60 m に縮小されるので 2〜3 倍が見やすい）
+- `--emit-lat/--emit-lon`: 粒子の投入位置。省略時は北端の最も低い点を自動選択
+- 画面では北が奥（上流）、東が右。範囲の左右・下流端から出た粒子は消去されます
+- 試作用の谷は `assets/terrain_test_valley.obj` に残してあるので、`terrain.obj` にコピーすれば戻せます
+
+出典: 国土地理院 標高タイル（https://maps.gsi.go.jp/development/ichiran.html）
+
 ## 岩テクスチャの差し替え
 
 `assets/rock.png` (または `rock.jpg` / `rock.jpeg` / `rock.bmp`) を任意の岩の写真に置き換えるだけで反映されます。
@@ -80,10 +96,13 @@ shaders/
   FluidSurface.hlsl  深度のバイラテラルぼかし、法線復元と水面の合成
 assets/
   rock.png           岩テクスチャ (差し替え可能)
-  terrain.obj        地形メッシュ (差し替え可能。無ければ手続き生成)
+  terrain.obj        地形メッシュ (差し替え可能。無ければ手続き生成。同梱は関ヶ原の実地形)
+  terrain.cfg        粒子の投入位置 (emit_x / emit_z)。無ければ自動
+  terrain_test_valley.obj  試作用の谷 (Blender なしで生成したもの)
 tools/
   blender_export_valley.py  Blender で試作用の谷を作って OBJ 出力するスクリプト
   make_test_valley.py       同じ谷を Blender なしで OBJ 出力するスクリプト
+  fetch_gsi_terrain.py      国土地理院の標高タイルから実在の地形を OBJ 出力するスクリプト
 ```
 
 ## ドキュメント

@@ -8,6 +8,8 @@
 #include "MeshLoader.h"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <string>
 
 using namespace DirectX;
 
@@ -305,7 +307,66 @@ bool Terrain::LoadMeshTerrain(Graphics& gfx)
         return false;
 
     m_meshFromFile = true;
+    LoadTerrainConfig();
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// LoadTerrainConfig
+//   例) assets/terrain.cfg
+//        emit_x = 12.5
+//        emit_z = -27.5
+//   '#' 以降はコメント。tools/fetch_gsi_terrain.py が --emit-lat/--emit-lon から生成する。
+//-----------------------------------------------------------------------------
+void Terrain::LoadTerrainConfig()
+{
+    std::ifstream file(Graphics::AssetPath(L"terrain.cfg"));
+    if (!file)
+        return;
+
+    // 前後の空白を取り除く
+    auto trim = [](const std::string& s) -> std::string {
+        const size_t b = s.find_first_not_of(" \t\r");
+        const size_t e = s.find_last_not_of(" \t\r");
+        return (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
+    };
+
+    bool hasX = false, hasZ = false;
+    std::string line;
+    while (std::getline(file, line))
+    {
+        const size_t hash = line.find('#');
+        if (hash != std::string::npos) line = line.substr(0, hash);
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        const std::string key = trim(line.substr(0, eq));
+        const std::string val = trim(line.substr(eq + 1));
+        if (key == "emit_x") { m_emitX = std::stof(val); hasX = true; }
+        if (key == "emit_z") { m_emitZ = std::stof(val); hasZ = true; }
+    }
+    m_hasEmitOverride = hasX && hasZ;
+    if (m_hasEmitOverride)
+    {
+        // 地形の範囲内に収める
+        m_emitX = std::clamp(m_emitX, -HALF_SIZE + 1.0f, HALF_SIZE - 1.0f);
+        m_emitZ = std::clamp(m_emitZ, -HALF_SIZE + 1.0f, HALF_SIZE - 1.0f);
+    }
+}
+
+//-----------------------------------------------------------------------------
+// GetEmitPoint
+//-----------------------------------------------------------------------------
+void Terrain::GetEmitPoint(float defaultZ, float& outX, float& outZ) const
+{
+    if (m_hasEmitOverride)
+    {
+        outX = m_emitX;
+        outZ = m_emitZ;
+        return;
+    }
+    outZ = defaultZ;
+    outX = GetValleyCenterX(defaultZ);
 }
 
 //-----------------------------------------------------------------------------
