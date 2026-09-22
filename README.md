@@ -22,6 +22,23 @@ build.bat      … cl.exe で一括ビルド (bin\MountainParticles.exe)
 run.bat        … 起動
 ```
 
+## GitHub への更新 (git.bat)
+
+コマンドプロンプトから `git.bat` で更新できます（Git の細かいコマンドを覚えなくても使えます）。
+
+```
+git.bat                    現在の状態を表示（変更点・ブランチ・最近の履歴）
+git.bat save "メッセージ"   変更をすべて記録して GitHub へ送る（add + commit + push）
+git.bat push               記録済みの変更を送る
+git.bat pull               GitHub の最新を取り込む
+git.bat main               いまのブランチの内容を main に反映する
+git.bat branch 名前         新しいブランチを作る
+git.bat switch 名前         ブランチを切り替える
+git.bat log / diff / undo / open
+```
+
+リポジトリ: https://github.com/githubtarohario/water_from_mountain
+
 `shaders` フォルダと `assets` フォルダは実行時に読み込まれます (exe の場所から自動で探します)。
 
 ## 地形を Blender から取り込む
