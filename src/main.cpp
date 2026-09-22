@@ -132,32 +132,39 @@ namespace
         Graphics& gfx = g_app.gfx;
         FrameConstants& fc = g_app.frame;
 
+        // 画面の縦横比。これを射影行列に渡さないと、横長の画面で絵が引き伸ばされてしまう
         const float aspect = static_cast<float>(gfx.GetWidth()) / static_cast<float>(gfx.GetHeight());
-        const XMMATRIX view = g_app.camera.GetViewMatrix();
-        const XMMATRIX proj = g_app.camera.GetProjMatrix(aspect);
+        const XMMATRIX view = g_app.camera.GetViewMatrix();      // ワールド → カメラ基準へ移す行列
+        const XMMATRIX proj = g_app.camera.GetProjMatrix(aspect);// カメラ基準 → 画面へ映す行列
 
         // HLSL 側で mul(float4(v,1), M) と書けるように転置して格納する
+        // (DirectXMath は「行ベクトル × 行列」、HLSL の既定は列優先のため、そのままだと食い違う)
         XMStoreFloat4x4(&fc.View,     XMMatrixTranspose(view));
         XMStoreFloat4x4(&fc.Proj,     XMMatrixTranspose(proj));
-        XMStoreFloat4x4(&fc.ViewProj, XMMatrixTranspose(view * proj));
+        XMStoreFloat4x4(&fc.ViewProj, XMMatrixTranspose(view * proj));   // 2 つをまとめた行列
 
-        const XMFLOAT3 camPos = g_app.camera.GetPosition();
+        const XMFLOAT3 camPos = g_app.camera.GetPosition();      // 鏡面反射の計算に使う視点の位置
         fc.CameraPosW = XMFLOAT4(camPos.x, camPos.y, camPos.z, 1.0f);
 
         // 光源: やや手前上方から谷を照らす (光源へ向かう単位ベクトル)
         const XMVECTOR lightW = XMVector3Normalize(XMVectorSet(-0.35f, 0.85f, 0.45f, 0.0f));
+        // 同じ向きをカメラ基準に直したもの。粒子や水面の陰影はビュー空間で計算するので両方渡す。
+        // TransformNormal は平行移動を無視するので、向きを変換するときはこちらを使う
         const XMVECTOR lightV = XMVector3Normalize(XMVector3TransformNormal(lightW, view));
         XMStoreFloat4(&fc.LightDirW, lightW);
         XMStoreFloat4(&fc.LightDirV, lightV);
 
+        // 画面サイズと、その逆数 (ピクセル → 0～1 の座標に直すときに使う)
         fc.ScreenSize = XMFLOAT4(
             static_cast<float>(gfx.GetWidth()), static_cast<float>(gfx.GetHeight()),
             1.0f / gfx.GetWidth(), 1.0f / gfx.GetHeight());
 
+        // x: 粒子の描画半径 (描画側で上書きされる)、y: 経過時間、z/w: ぼかし方向
         fc.Params = XMFLOAT4(0.15f, g_app.sph.GetSimTime(), 0.0f, 0.0f);
 
-        gfx.UpdateBuffer(g_app.cbFrame.Get(), &fc, sizeof(fc));
+        gfx.UpdateBuffer(g_app.cbFrame.Get(), &fc, sizeof(fc));   // CPU 側の内容を GPU へ転送
 
+        // 定数バッファを頂点シェーダーとピクセルシェーダーの両方に接続する (HLSL の register(b0))
         ID3D11Buffer* cb = g_app.cbFrame.Get();
         gfx.GetContext()->VSSetConstantBuffers(0, 1, &cb);
         gfx.GetContext()->PSSetConstantBuffers(0, 1, &cb);
@@ -240,20 +247,20 @@ namespace
 
         case WM_MOUSEMOVE:
         {
-            const int x = GET_X_LPARAM(lParam);
+            const int x = GET_X_LPARAM(lParam);     // 今回のマウス位置 (ウィンドウ内のピクセル)
             const int y = GET_Y_LPARAM(lParam);
-            const int dx = x - g_app.lastMouseX;
+            const int dx = x - g_app.lastMouseX;    // 前回からの移動量。これが回転・移動の量になる
             const int dy = y - g_app.lastMouseY;
             if (g_app.lButtonDown)
             {
-                // 1 ピクセルあたり 0.3 度回転
+                // 1 ピクセルあたり 0.3 度回転。dx を負にすると「掴んで回す」感覚の向きになる
                 g_app.camera.Rotate(-dx * 0.005f, dy * 0.005f);
             }
             else if (g_app.rButtonDown)
             {
-                g_app.camera.Pan(-dx * 0.05f, dy * 0.05f);
+                g_app.camera.Pan(-dx * 0.05f, dy * 0.05f);   // 注視点ごと平行移動
             }
-            g_app.lastMouseX = x;
+            g_app.lastMouseX = x;                   // 次回の差分計算のために覚えておく
             g_app.lastMouseY = y;
             return 0;
         }
@@ -316,18 +323,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
         return 1;
     }
 
-    if (!g_app.gfx.Initialize(hWnd, clientW, clientH))
+    if (!g_app.gfx.Initialize(hWnd, clientW, clientH))       // D3D11 デバイス・スワップチェーン
         return 1;
-    if (!g_app.gfx.CreateConstantBuffer(sizeof(FrameConstants), g_app.cbFrame))
+    if (!g_app.gfx.CreateConstantBuffer(sizeof(FrameConstants), g_app.cbFrame))   // 定数バッファ b0
         return 1;
-    if (!g_app.terrain.Initialize(g_app.gfx))
+    if (!g_app.terrain.Initialize(g_app.gfx))               // 地形・テクスチャ・地形シェーダー
         return 1;
 
     SPHParams params;   // 既定値を使用 (SPH.h を参照)
-    g_app.sph.Initialize(&g_app.terrain, params);
+    g_app.sph.Initialize(&g_app.terrain, params);           // 粒子配列を確保 (地形は衝突判定に使う)
 
-    if (!g_app.fluidRenderer.Initialize(g_app.gfx, params.maxParticles))
+    if (!g_app.fluidRenderer.Initialize(g_app.gfx, params.maxParticles))   // 粒子バッファ・シェーダー
         return 1;
+    // 描画する球の半径。粒子モードは間隔の半分 (粒同士が離れて見える)、
+    // 表面モードは少し大きめにして隣の球と重ね、面に隙間ができないようにする
     g_app.fluidRenderer.SetParticleRadius(params.particleSpacing * 0.5f);
     g_app.fluidRenderer.SetSurfaceRadius(params.particleSpacing * 1.3f);   // 隣の粒子と重なるよう大きめ
 
@@ -349,30 +358,31 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
             continue;
         }
 
-        // 経過時間
+        // 経過時間。steady_clock は時刻合わせで巻き戻らないので、こういう用途に向く
         const auto now = Clock::now();
-        const float dt = std::chrono::duration<float>(now - prevTime).count();
+        const float dt = std::chrono::duration<float>(now - prevTime).count();   // 前フレームからの秒数
         prevTime = now;
 
-        // 物理更新
+        // 物理更新 (内部で dt からサブステップ数を決めて、その回数だけ計算する)
         if (!g_app.paused)
             g_app.sph.Update(dt);
 
         // 描画
         const float clearColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };   // 参考動画と同じ白背景
-        g_app.gfx.BeginFrame(clearColor);
-        UpdateFrameConstants();
-        g_app.terrain.Render(g_app.gfx);
+        g_app.gfx.BeginFrame(clearColor);       // 画面と深度バッファを消し、描画先を設定する
+        UpdateFrameConstants();                 // カメラ・光源の情報を GPU へ送る
+        g_app.terrain.Render(g_app.gfx);        // 先に地形を描く (深度バッファが埋まる)
+        // 粒子を描く。GetRenderData は位置と速さを描画用の配列にまとめたもの
         g_app.fluidRenderer.Render(g_app.gfx, g_app.sph.GetRenderData(), g_app.mode,
                                    g_app.frame, g_app.cbFrame.Get());
-        g_app.gfx.EndFrame(true);
+        g_app.gfx.EndFrame(true);               // 描き上がった絵を画面に出す (true = 垂直同期)
 
-        // FPS 計測 (0.5 秒ごとに更新)
-        g_app.fpsTimer += dt;
-        g_app.fpsFrames++;
+        // FPS 計測 (0.5 秒ごとに更新)。毎フレーム計算すると数字が激しく動いて読めないため
+        g_app.fpsTimer += dt;                   // 計測区間の経過時間
+        g_app.fpsFrames++;                      // 計測区間に描いたフレーム数
         if (g_app.fpsTimer >= 0.5f)
         {
-            g_app.fps = g_app.fpsFrames / g_app.fpsTimer;
+            g_app.fps = g_app.fpsFrames / g_app.fpsTimer;   // フレーム数 ÷ 秒数 = 1 秒あたりの枚数
             g_app.fpsTimer = 0.0f;
             g_app.fpsFrames = 0;
         }

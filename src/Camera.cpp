@@ -31,8 +31,10 @@ Camera::Camera()
 //-----------------------------------------------------------------------------
 void Camera::Rotate(float dYaw, float dPitch)
 {
-    m_yaw   += dYaw;
+    m_yaw   += dYaw;                        // 水平方向はぐるぐる回せるので制限しない
     m_pitch += dPitch;
+    // 真上 (90 度) まで行くと視線と上方向ベクトルが平行になり、ビュー行列が作れなくなる。
+    // そのため 89 度でとどめておく。
     const float limit = XMConvertToRadians(89.0f);
     m_pitch = std::clamp(m_pitch, -limit, limit);
 }
@@ -42,7 +44,8 @@ void Camera::Rotate(float dYaw, float dPitch)
 //-----------------------------------------------------------------------------
 void Camera::Zoom(float factor)
 {
-    m_distance = std::clamp(m_distance * factor, 3.0f, 300.0f);
+    // 差ではなく倍率で変えると、遠いときは大きく、近いときは細かく寄れて操作しやすい
+    m_distance = std::clamp(m_distance * factor, 3.0f, 300.0f);   // 近づきすぎ・離れすぎを防ぐ
 }
 
 //-----------------------------------------------------------------------------
@@ -54,17 +57,18 @@ void Camera::Zoom(float factor)
 //-----------------------------------------------------------------------------
 void Camera::Pan(float dx, float dy)
 {
-    XMFLOAT3 posF = GetPosition();
-    XMVECTOR pos = XMLoadFloat3(&posF);
+    XMFLOAT3 posF = GetPosition();                      // 現在のカメラ位置
+    XMVECTOR pos = XMLoadFloat3(&posF);                 // 計算用の SIMD 型に載せ替える
     XMVECTOR target = XMLoadFloat3(&m_target);
-    XMVECTOR forward = XMVector3Normalize(XMVectorSubtract(target, pos));
-    XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    XMVECTOR forward = XMVector3Normalize(XMVectorSubtract(target, pos));  // 視線方向 (単位ベクトル)
+    XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);                // 世界の上方向
+    // 外積で「視線と上方向の両方に垂直な向き」= 画面の右方向が得られる
     XMVECTOR right = XMVector3Normalize(XMVector3Cross(worldUp, forward));
-    XMVECTOR up = XMVector3Cross(forward, right);
+    XMVECTOR up = XMVector3Cross(forward, right);       // さらに外積を取ると画面の上方向
 
-    target = XMVectorAdd(target, XMVectorScale(right, dx));
-    target = XMVectorAdd(target, XMVectorScale(up, dy));
-    XMStoreFloat3(&m_target, target);
+    target = XMVectorAdd(target, XMVectorScale(right, dx));   // 注視点を画面の右へ dx だけ動かす
+    target = XMVectorAdd(target, XMVectorScale(up, dy));      // 同じく上へ dy だけ動かす
+    XMStoreFloat3(&m_target, target);                   // 結果をメンバ変数に書き戻す
 }
 
 //-----------------------------------------------------------------------------
@@ -73,11 +77,13 @@ void Camera::Pan(float dx, float dy)
 //-----------------------------------------------------------------------------
 XMFLOAT3 Camera::GetPosition() const
 {
-    const float cp = std::cos(m_pitch);
+    // 極座標 (方位角 yaw・仰角 pitch・距離 distance) から直交座標を求める。
+    // 仰角ぶんだけ上に上がり、水平面に投影した長さが distance * cos(pitch) になる。
+    const float cp = std::cos(m_pitch);     // 水平面へ投影したときの縮み率
     return XMFLOAT3(
-        m_target.x + m_distance * cp * std::sin(m_yaw),
-        m_target.y + m_distance * std::sin(m_pitch),
-        m_target.z + m_distance * cp * std::cos(m_yaw));
+        m_target.x + m_distance * cp * std::sin(m_yaw),   // 東西方向
+        m_target.y + m_distance * std::sin(m_pitch),      // 高さ
+        m_target.z + m_distance * cp * std::cos(m_yaw));  // 南北方向
 }
 
 //-----------------------------------------------------------------------------

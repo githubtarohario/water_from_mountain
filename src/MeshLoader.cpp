@@ -61,17 +61,18 @@ namespace
     //-------------------------------------------------------------------------
     IndexTriple ParseFaceVertex(const std::string& token, int nv, int nvt, int nvn)
     {
-        int raw[3] = { 0, 0, 0 };   // v, vt, vn の生の値
-        size_t start = 0;
-        for (int k = 0; k < 3; ++k)
+        int raw[3] = { 0, 0, 0 };   // v, vt, vn の生の値 (0 = 指定なし)
+        size_t start = 0;           // いま読んでいる位置
+        for (int k = 0; k < 3; ++k) // k = 0:頂点, 1:UV, 2:法線
         {
-            const size_t slash = token.find('/', start);
+            const size_t slash = token.find('/', start);    // 次の '/' の位置
+            // '/' までを取り出す。'a//c' のように空のときは raw[k] = 0 のまま (指定なし)
             const std::string part = token.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
             if (!part.empty())
                 raw[k] = std::atoi(part.c_str());
             if (slash == std::string::npos)
-                break;
-            start = slash + 1;
+                break;              // '/' が無ければここで終わり ("a" だけの形式)
+            start = slash + 1;      // 次の区切りの後ろから読み進める
         }
         return { ResolveIndex(raw[0], nv), ResolveIndex(raw[1], nvt), ResolveIndex(raw[2], nvn) };
     }
@@ -162,7 +163,8 @@ namespace MeshLoader
                     faceIndices.push_back(it->second);
                 }
 
-                // 扇状三角形分割: (0,1,2), (0,2,3), (0,3,4), ...
+                // 扇状三角形分割: 最初の頂点を軸に (0,1,2), (0,2,3), (0,3,4) … と分ける。
+                // Blender が出力する四角形は 2 枚の三角形になる。凸な多角形なら常に正しい。
                 for (size_t i = 1; i + 1 < faceIndices.size(); ++i)
                 {
                     out.indices.push_back(faceIndices[0]);
@@ -202,8 +204,10 @@ namespace MeshLoader
             MeshVertex& c = mesh.vertices[mesh.indices[i + 2]];
 
             const XMVECTOR p0 = XMLoadFloat3(&a.pos);
-            const XMVECTOR e1 = XMVectorSubtract(XMLoadFloat3(&b.pos), p0);
-            const XMVECTOR e2 = XMVectorSubtract(XMLoadFloat3(&c.pos), p0);
+            const XMVECTOR e1 = XMVectorSubtract(XMLoadFloat3(&b.pos), p0);   // 辺ベクトル b - a
+            const XMVECTOR e2 = XMVectorSubtract(XMLoadFloat3(&c.pos), p0);   // 辺ベクトル c - a
+            // 外積は面に垂直で、長さが三角形の面積の 2 倍になる。
+            // 正規化せずに足し込むことで、大きい面ほど強く影響する平均になる。
             const XMVECTOR fn = XMVector3Cross(e1, e2);
 
             for (MeshVertex* v : { &a, &b, &c })

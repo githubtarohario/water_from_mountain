@@ -42,21 +42,24 @@ struct PSIn
 //-----------------------------------------------------------------------------
 PSIn VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 {
-    float4 p = Particles[iid];
+    float4 p = Particles[iid];      // 粒子データ (xyz = ワールド座標, w = 速さ)
+    // ワールド座標をカメラ基準 (ビュー空間) に変換する。
+    // ビュー空間では「画面の右 = +x、上 = +y」なので、四角形を作るのが簡単になる。
     float3 centerV = mul(float4(p.xyz, 1.0), View).xyz;
 
     // トライアングルストリップ用の 4 隅: 左下, 左上, 右下, 右上
     float2 corners[4] = { float2(-1, -1), float2(-1, 1), float2(1, -1), float2(1, 1) };
-    float2 c = corners[vid];
+    float2 c = corners[vid];        // 今回の頂点がどの角かを番号で選ぶ
 
     float r = Params.x;   // 粒子の描画半径
+    // 中心から xy 方向にだけずらす (z は動かさない) ので、四角形は常にカメラに正対する
     float3 posV = centerV + float3(c * r, 0.0);   // 常にカメラに正対する四角形
 
     PSIn o;
-    o.posH    = mul(float4(posV, 1.0), Proj);
-    o.uv      = c;
-    o.centerV = centerV;
-    o.speed   = p.w;
+    o.posH    = mul(float4(posV, 1.0), Proj);   // 射影してクリップ座標へ (ここで遠近感が付く)
+    o.uv      = c;                              // ピクセルシェーダーで球の形を作るのに使う
+    o.centerV = centerV;                        // 球の中心 (ピクセル側で球面上の点を求めるため)
+    o.speed   = p.w;                            // 着色に使う速さ
     return o;
 }
 
@@ -71,15 +74,17 @@ PSIn VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 //-----------------------------------------------------------------------------
 bool SphereSurface(PSIn i, out float3 normalV, out float3 posV, out float depth)
 {
-    float r2 = dot(i.uv, i.uv);
-    normalV = 0; posV = 0; depth = 0;
+    float r2 = dot(i.uv, i.uv);     // 四角形の中心からの距離の 2 乗 (中心で 0、角で 2)
+    normalV = 0; posV = 0; depth = 0;   // out 引数は必ず初期化しておく (未設定だとコンパイルエラー)
     if (r2 > 1.0)
-        return false;
+        return false;               // 半径 1 の円の外 = 球からはみ出した部分なので描かない
 
+    // 球を正面から見たとき、中心から r 離れた点の高さは sqrt(1 - r²)。
     // 左手系のビュー空間ではカメラは +z を向くので、カメラ側の半球は z < 0
-    normalV = float3(i.uv, -sqrt(1.0 - r2));
-    posV    = i.centerV + normalV * Params.x;
+    normalV = float3(i.uv, -sqrt(1.0 - r2));    // そのまま法線になる (長さ 1)
+    posV    = i.centerV + normalV * Params.x;   // 球面上の実際の位置 = 中心 + 法線 × 半径
 
+    // その点を射影して深度を求める。w で割るのが透視除算で、結果は 0 (手前) ～ 1 (奥)
     float4 clip = mul(float4(posV, 1.0), Proj);
     depth = clip.z / clip.w;
     return true;
@@ -106,15 +111,15 @@ PSColorOut PSColor(PSIn i)
     if (!SphereSurface(i, n, posV, depth))
         discard;
 
-    float3 L = normalize(LightDirV.xyz);
-    float3 V = normalize(-posV);            // 表面からカメラへ
+    float3 L = normalize(LightDirV.xyz);    // 表面から光源へ向かう向き
+    float3 V = normalize(-posV);            // 表面からカメラへ (カメラは原点なので位置の逆向き)
     float3 H = normalize(L + V);            // ハーフベクトル (Blinn-Phong)
 
-    float diff = saturate(dot(n, L));
-    float spec = pow(saturate(dot(n, H)), 40.0);
+    float diff = saturate(dot(n, L));           // 拡散反射: 正面から当たるほど明るい (0～1)
+    float spec = pow(saturate(dot(n, H)), 40.0);// 鏡面反射: 指数が大きいほどハイライトが小さく鋭い
 
-    float3 base = JetColor(i.speed / MAX_SPEED_FOR_COLOR);
-    float3 col = base * (0.35 + 0.75 * diff) + spec * 0.5;
+    float3 base = JetColor(i.speed / MAX_SPEED_FOR_COLOR);   // 速さ 0～1 を青→赤の色に変換
+    float3 col = base * (0.35 + 0.75 * diff) + spec * 0.5;   // 0.35 は影の部分が黒く潰れないための環境光
 
     PSColorOut o;
     o.color = float4(col, 1.0);

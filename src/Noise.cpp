@@ -103,19 +103,21 @@ namespace Noise
     //-------------------------------------------------------------------------
     float Perlin2D(float x, float y)
     {
-        // 評価点を含む格子セルの左下の整数座標 (0～255 に丸める)
+        // 評価点を含む格子セルの左下の整数座標。& 255 で 0～255 に折り返し、
+        // 置換テーブル (256 要素) の範囲に収める
         const int X = static_cast<int>(std::floor(x)) & 255;
         const int Y = static_cast<int>(std::floor(y)) & 255;
 
-        // セル内での相対位置 (0～1)
+        // セル内での相対位置 (0～1)。左下が (0,0)、右上が (1,1)
         const float xf = x - std::floor(x);
         const float yf = y - std::floor(y);
 
-        // 補間係数 (Fade 曲線で緩和)
+        // 補間係数 (Fade 曲線で緩和)。そのまま xf を使うと格子の境目に折れ目が出る
         const float u = Fade(xf);
         const float v = Fade(yf);
 
-        // 4 隅のハッシュ値
+        // 4 隅のハッシュ値。テーブルを 2 回引くことで x と y が混ざり、
+        // 規則性のない値になる (aa = 左下, ab = 左上, ba = 右下, bb = 右上)
         const int aa = s_perm[s_perm[X] + Y];
         const int ab = s_perm[s_perm[X] + Y + 1];
         const int ba = s_perm[s_perm[X + 1] + Y];
@@ -137,18 +139,19 @@ namespace Noise
     float Fbm2D(float x, float y, int octaves, float lacunarity, float gain)
     {
         float sum = 0.0f;        // ノイズの累積値
-        float amplitude = 1.0f;  // 現在のオクターブの振幅
-        float frequency = 1.0f;  // 現在のオクターブの周波数
+        float amplitude = 1.0f;  // 現在のオクターブの振幅 (層が進むごとに小さくなる)
+        float frequency = 1.0f;  // 現在のオクターブの周波数 (層が進むごとに細かくなる)
         float norm = 0.0f;       // 正規化用: 振幅の合計
 
         for (int i = 0; i < octaves; ++i)
         {
+            // 座標に frequency を掛けると模様が細かくなり、値に amplitude を掛けると起伏が小さくなる
             sum += amplitude * Perlin2D(x * frequency, y * frequency);
             norm += amplitude;
-            amplitude *= gain;
-            frequency *= lacunarity;
+            amplitude *= gain;         // 既定 0.5 = 次の層は振幅が半分
+            frequency *= lacunarity;   // 既定 2.0 = 次の層は 2 倍細かい
         }
-        return sum / norm;
+        return sum / norm;       // 振幅の合計で割り、層数によらず -1～1 に収める
     }
 
     //-------------------------------------------------------------------------
@@ -167,8 +170,10 @@ namespace Noise
 
         for (int i = 0; i < octaves; ++i)
         {
+            // 絶対値を取って 1 から引くと、ノイズが 0 を横切る線の上で r = 1 になり、
+            // そこが尾根 (稜線や岩の割れ目) として浮かび上がる
             float r = 1.0f - std::fabs(Perlin2D(x * frequency, y * frequency));
-            r = r * r;   // 尾根を鋭くする
+            r = r * r;   // 2 乗すると尾根の幅が細くなり、より鋭くなる
             sum += amplitude * r;
             norm += amplitude;
             amplitude *= 0.5f;
@@ -184,10 +189,12 @@ namespace Noise
     //-------------------------------------------------------------------------
     float Perlin2DPeriodic(float x, float y, int period)
     {
-        const int Xi = static_cast<int>(std::floor(x));
+        const int Xi = static_cast<int>(std::floor(x));   // 格子セルの左下の整数座標
         const int Yi = static_cast<int>(std::floor(y));
 
-        // 負の値でも正しく折り返すように ((v % p) + p) % p とする
+        // 座標を period で折り返すことで、period 離れた格子点が同じ勾配を持つようになり、
+        // テクスチャの右端と左端 (上端と下端) が滑らかにつながる。
+        // C++ の % は負の値に対して負を返すので、((v % p) + p) % p で正に直す
         auto wrap = [period](int v) { return ((v % period) + period) % period; };
         const int X0 = wrap(Xi) & 255;
         const int Y0 = wrap(Yi) & 255;

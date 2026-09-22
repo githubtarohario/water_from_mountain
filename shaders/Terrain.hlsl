@@ -39,10 +39,12 @@ struct PSIn
 PSIn VSMain(VSIn i)
 {
     PSIn o;
+    // ワールド座標に ViewProj を掛けて、一気に画面上の位置 (クリップ座標) にする。
+    // 地形はワールド座標で作ってあるので、ワールド行列を掛ける必要がない。
     o.posH = mul(float4(i.pos, 1.0), ViewProj);
-    o.posW = i.pos;
-    o.nrm  = i.nrm;
-    o.uv   = i.uv;
+    o.posW = i.pos;                         // ピクセル側で高さによる陰影を付けるのに使う
+    o.nrm  = i.nrm;                         // 法線 (三角形内で自動的に補間される)
+    o.uv   = i.uv;                          // テクスチャ座標 (同上)
     return o;
 }
 
@@ -55,20 +57,22 @@ PSIn VSMain(VSIn i)
 //-----------------------------------------------------------------------------
 float4 PSMain(PSIn i) : SV_Target
 {
+    // 補間された法線は長さが 1 でなくなるので、正規化し直してから使う
     float3 n = normalize(i.nrm);
-    float3 tex = RockTex.Sample(LinearWrap, i.uv).rgb;
+    float3 tex = RockTex.Sample(LinearWrap, i.uv).rgb;   // 岩肌テクスチャの色を読む
 
-    // 2 つ目のテクスチャサンプル (異なるスケール) を掛けて繰り返し感を減らす
+    // 2 つ目のテクスチャサンプル (異なるスケール) を掛けて繰り返し感を減らす。
+    // 0.23 倍のゆっくりした模様が重なることで、同じ絵の反復が目立たなくなる。
     float3 tex2 = RockTex.Sample(LinearWrap, i.uv * 0.23 + 0.31).rgb;
     tex = tex * (0.75 + 0.5 * tex2);
 
-    // ランバート拡散反射: max(0, N・L)
+    // ランバート拡散反射: 面が光の方を向くほど明るい。負の値は saturate で 0 に切る
     float diff = saturate(dot(n, LightDirW.xyz));
 
-    // 半球ライティング風の環境光: 上を向いた面ほど明るい
+    // 半球ライティング風の環境光: 上を向いた面ほど空からの光を受けて明るい
     float ambient = 0.30 + 0.15 * saturate(n.y);
 
-    float3 col = tex * (ambient + 0.75 * diff);
+    float3 col = tex * (ambient + 0.75 * diff);   // テクスチャの色 × 明るさ
 
     // 谷底 (低い場所) を少し暗くしてくぼみを強調
     float depthShade = saturate((i.posW.y + 0.20 * i.posW.z + 3.0) / 10.0);   // 谷底で 0.3 付近、山で 1

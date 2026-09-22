@@ -50,32 +50,37 @@ namespace TextureLoader
         D3D11_TEXTURE2D_DESC td = {};
         td.Width     = width;
         td.Height    = height;
-        td.MipLevels = 0;                                   // 0 = 全ミップレベル
-        td.ArraySize = 1;
-        td.Format    = DXGI_FORMAT_R8G8B8A8_UNORM;
-        td.SampleDesc.Count = 1;
-        td.Usage     = D3D11_USAGE_DEFAULT;
+        td.MipLevels = 0;                                   // 0 = 1x1 まで全ミップレベルを確保
+        td.ArraySize = 1;                                   // 1 枚だけ (配列テクスチャではない)
+        td.Format    = DXGI_FORMAT_R8G8B8A8_UNORM;          // RGBA 各 8bit を 0.0～1.0 として読む
+        td.SampleDesc.Count = 1;                            // マルチサンプルなし
+        td.Usage     = D3D11_USAGE_DEFAULT;                 // GPU 側で保持する (CPU から直接触らない)
+        // ミップ生成を GPU に任せるには、読み取り用途に加えて描画先としても使える必要がある
         td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-        td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+        td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;   // GenerateMips を許可する印
 
         ComPtr<ID3D11Texture2D> tex;
         if (FAILED(gfx.GetDevice()->CreateTexture2D(&td, nullptr, tex.GetAddressOf())))
             return false;
 
-        // レベル 0 にピクセルを書き込む (行ピッチ = 幅 × 4 バイト)
+        // レベル 0 (原寸) にピクセルを書き込む。
+        // 第 5 引数の「行ピッチ」は 1 行ぶんのバイト数で、RGBA 8bit なら 幅 × 4 になる
         gfx.GetContext()->UpdateSubresource(tex.Get(), 0, nullptr, pixels, width * 4, 0);
 
+        // ビュー (SRV) はシェーダーから読むための窓口
         D3D11_SHADER_RESOURCE_VIEW_DESC srvd = {};
-        srvd.Format = td.Format;
-        srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        srvd.Texture2D.MipLevels = static_cast<UINT>(-1);   // 全ミップレベル
+        srvd.Format = td.Format;                           // テクスチャと同じ形式で読む
+        srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;// 2 次元テクスチャとして扱う
+        srvd.Texture2D.MipLevels = static_cast<UINT>(-1);  // -1 = 全ミップレベルを使う
 
         ComPtr<ID3D11ShaderResourceView> srv;
         if (FAILED(gfx.GetDevice()->CreateShaderResourceView(tex.Get(), &srvd, srv.GetAddressOf())))
             return false;
 
+        // レベル 0 を 1/2, 1/4 … と縮小した画像を GPU が自動で作る。
+        // 遠景でテクスチャがちらつく (エイリアシング) のを防ぐために必要。
         gfx.GetContext()->GenerateMips(srv.Get());
-        outSRV = srv;
+        outSRV = srv;                                      // 呼び出し側へ結果を渡す
         return true;
     }
 
@@ -118,8 +123,8 @@ namespace TextureLoader
         if (FAILED(hr) || width == 0 || height == 0)
             return false;
 
-        // 4. メモリへ展開
-        const UINT stride = width * 4;                       // 1 行のバイト数
+        // 4. メモリへ展開 (ここで初めて画像全体が伸張される)
+        const UINT stride = width * 4;                       // 1 行のバイト数 (RGBA 8bit × 幅)
         std::vector<uint8_t> pixels(static_cast<size_t>(stride) * height);
         hr = converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data());
         if (FAILED(hr))

@@ -39,11 +39,12 @@ float3 JetColor(float t)
     const float3 c3 = float3(1.00, 0.95, 0.00);   // 黄
     const float3 c4 = float3(1.00, 0.15, 0.00);   // 赤
 
+    // t を 0～4 に伸ばすと、整数部が「どの 2 色の間か」、小数部が「その中での位置」になる
     float s = t * 4.0;
-    if (s < 1.0) return lerp(c0, c1, s);
-    if (s < 2.0) return lerp(c1, c2, s - 1.0);
-    if (s < 3.0) return lerp(c2, c3, s - 2.0);
-    return lerp(c3, c4, s - 3.0);
+    if (s < 1.0) return lerp(c0, c1, s);        // 濃い青 → 水色
+    if (s < 2.0) return lerp(c1, c2, s - 1.0);  // 水色 → 緑
+    if (s < 3.0) return lerp(c2, c3, s - 2.0);  // 緑 → 黄
+    return lerp(c3, c4, s - 3.0);               // 黄 → 赤
 }
 
 //-----------------------------------------------------------------------------
@@ -66,7 +67,11 @@ struct FullscreenVSOut
 FullscreenVSOut VSFullscreen(uint vid : SV_VertexID)
 {
     FullscreenVSOut o;
+    // ビット演算で頂点番号から (0,0), (2,0), (0,2) を作る小技。
+    // vid=0 → (0,0)、vid=1 → (2,0)、vid=2 → (0,2)
     float2 uv = float2((vid << 1) & 2, vid & 2);            // (0,0), (2,0), (0,2)
+    // uv 0～2 を クリップ座標 -1～3 に変換する。y は画面の上下が逆なので符号を反転。
+    // 画面 (-1～1) より大きい三角形になり、はみ出した部分は GPU が切り落とす。
     o.posH = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
     o.uv = uv;
     return o;

@@ -65,18 +65,19 @@ bool Graphics::Initialize(HWND hWnd, int width, int height)
 
     // ---- 1. スワップチェーンの設定 ----
     DXGI_SWAP_CHAIN_DESC sd = {};
-    sd.BufferCount       = 2;                                   // ダブルバッファ
-    sd.BufferDesc.Width  = width;
+    // スワップチェーン = 「今表示している絵」と「次に描いている絵」を入れ替える仕組み
+    sd.BufferCount       = 2;                                   // ダブルバッファ (表と裏の 2 枚)
+    sd.BufferDesc.Width  = width;                               // 描画する解像度 [px]
     sd.BufferDesc.Height = height;
     sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;          // 8bit RGBA
-    sd.BufferDesc.RefreshRate.Numerator   = 60;
+    sd.BufferDesc.RefreshRate.Numerator   = 60;                 // 60/1 = 60 Hz を希望する
     sd.BufferDesc.RefreshRate.Denominator = 1;
-    sd.BufferUsage       = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow      = hWnd;
+    sd.BufferUsage       = DXGI_USAGE_RENDER_TARGET_OUTPUT;     // 描画先として使う
+    sd.OutputWindow      = hWnd;                                // どのウィンドウに表示するか
     sd.SampleDesc.Count  = 1;                                   // マルチサンプルなし
     sd.SampleDesc.Quality= 0;
-    sd.Windowed          = TRUE;
-    sd.SwapEffect        = DXGI_SWAP_EFFECT_DISCARD;
+    sd.Windowed          = TRUE;                                // ウィンドウモード
+    sd.SwapEffect        = DXGI_SWAP_EFFECT_DISCARD;            // 表示後の中身は捨ててよい
 
     // ---- 2. デバイスとスワップチェーンの作成 ----
     UINT createFlags = 0;
@@ -137,16 +138,17 @@ bool Graphics::CreateBackBufferViews()
     hr = m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, m_backBufferRTV.ReleaseAndGetAddressOf());
     if (FAILED(hr)) return false;
 
-    // 深度バッファ: 24bit 深度 + 8bit ステンシル
+    // 深度バッファ: ピクセルごとに「いま描かれている一番手前の距離」を覚えておく場所。
+    // これがないと、奥の物体が後から描かれたときに手前の物体を上書きしてしまう。
     D3D11_TEXTURE2D_DESC td = {};
-    td.Width      = m_width;
+    td.Width      = m_width;                        // 画面と同じ大きさでないといけない
     td.Height     = m_height;
     td.MipLevels  = 1;
     td.ArraySize  = 1;
-    td.Format     = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    td.Format     = DXGI_FORMAT_D24_UNORM_S8_UINT;  // 24bit 深度 + 8bit ステンシル
     td.SampleDesc.Count = 1;
     td.Usage      = D3D11_USAGE_DEFAULT;
-    td.BindFlags  = D3D11_BIND_DEPTH_STENCIL;
+    td.BindFlags  = D3D11_BIND_DEPTH_STENCIL;       // 深度バッファとして使う
 
     hr = m_device->CreateTexture2D(&td, nullptr, m_depthTex.ReleaseAndGetAddressOf());
     if (FAILED(hr)) return false;
@@ -154,11 +156,11 @@ bool Graphics::CreateBackBufferViews()
     hr = m_device->CreateDepthStencilView(m_depthTex.Get(), nullptr, m_depthDSV.ReleaseAndGetAddressOf());
     if (FAILED(hr)) return false;
 
-    // ビューポート: バックバッファ全体に描画する
+    // ビューポート: -1～1 の座標を実際の何ピクセル目に対応させるかの指定
     D3D11_VIEWPORT vp = {};
     vp.Width    = static_cast<float>(m_width);
     vp.Height   = static_cast<float>(m_height);
-    vp.MinDepth = 0.0f;
+    vp.MinDepth = 0.0f;                     // 深度値の範囲 (0 = 手前, 1 = 奥)
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
@@ -356,10 +358,11 @@ bool Graphics::CreateConstantBuffer(UINT byteSize, ComPtr<ID3D11Buffer>& outBuf)
 //-----------------------------------------------------------------------------
 void Graphics::UpdateBuffer(ID3D11Buffer* buf, const void* data, size_t byteSize)
 {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    D3D11_MAPPED_SUBRESOURCE mapped = {};   // GPU 側メモリの書き込み先アドレスを受け取る
+    // Map で GPU のメモリを CPU から触れる状態にする。成功すると mapped.pData が使える
     if (SUCCEEDED(m_context->Map(buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
     {
-        memcpy(mapped.pData, data, byteSize);
-        m_context->Unmap(buf, 0);
+        memcpy(mapped.pData, data, byteSize);   // CPU のデータをそのままコピー
+        m_context->Unmap(buf, 0);               // 書き終わったら必ず解除する (忘れると描画されない)
     }
 }
